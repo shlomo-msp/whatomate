@@ -371,6 +371,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/analytics/messages", app.GetMessageAnalytics)
 	g.GET("/api/analytics/chatbot", app.GetChatbotAnalytics)
 
+	// Organization Settings
+	g.GET("/api/org/settings", app.GetOrganizationSettings)
+	g.PUT("/api/org/settings", app.UpdateOrganizationSettings)
+
 	// Serve embedded frontend (SPA)
 	if frontend.IsEmbedded() {
 		lo.Info("Serving embedded frontend", "base_path", basePath)

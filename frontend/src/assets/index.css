@@ -136,3 +136,14 @@
 .chat-bubble-time svg {
   @apply opacity-100;
 }
+
+/* Emoji picker dark theme override to match app dark blue theme */
+.dark .v3-emoji-picker.v3-color-theme-dark {
+  --v3-picker-bg: hsl(222.2 84% 4.9%);
+  --v3-picker-fg: hsl(210 40% 98%);
+  --v3-picker-border: hsl(217.2 32.6% 17.5%);
+  --v3-picker-input-bg: hsl(217.2 32.6% 17.5%);
+  --v3-picker-input-border: hsl(217.2 32.6% 25%);
+  --v3-picker-input-focus-border: hsl(142 70% 49%);
+  --v3-picker-emoji-hover: hsl(217.2 32.6% 17.5%);
+}

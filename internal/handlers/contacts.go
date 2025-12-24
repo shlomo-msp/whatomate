@@ -100,6 +100,9 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list contacts", nil, "")
 	}
 
+	// Check if phone masking is enabled
+	shouldMask := a.ShouldMaskPhoneNumbers(orgID)
+
 	// Convert to response format
 	response := make([]ContactResponse, len(contacts))
 	for i, c := range contacts {
@@ -118,9 +121,14 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			}
 		}
 
+		phoneNumber := c.PhoneNumber
+		if shouldMask {
+			phoneNumber = MaskPhoneNumber(phoneNumber)
+		}
+
 		response[i] = ContactResponse{
 			ID:                 c.ID,
-			PhoneNumber:        c.PhoneNumber,
+			PhoneNumber:        phoneNumber,
 			Name:               c.ProfileName, // Use profile name as name
 			ProfileName:        c.ProfileName,
 			Status:             "active",
@@ -182,9 +190,14 @@ func (a *App) GetContact(r *fastglue.Request) error {
 		}
 	}
 
+	phoneNumber := contact.PhoneNumber
+	if a.ShouldMaskPhoneNumbers(orgID) {
+		phoneNumber = MaskPhoneNumber(phoneNumber)
+	}
+
 	response := ContactResponse{
 		ID:                 contact.ID,
-		PhoneNumber:        contact.PhoneNumber,
+		PhoneNumber:        phoneNumber,
 		Name:               contact.ProfileName,
 		ProfileName:        contact.ProfileName,
 		Status:             "active",

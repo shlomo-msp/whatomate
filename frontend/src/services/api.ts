@@ -261,4 +261,14 @@ export const analyticsService = {
     api.get('/analytics/chatbot', { params })
 }
 
+export const organizationService = {
+  getSettings: () => api.get('/org/settings'),
+  updateSettings: (data: {
+    mask_phone_numbers?: boolean
+    timezone?: string
+    date_format?: string
+    name?: string
+  }) => api.put('/org/settings', data)
+}
+
 export default api

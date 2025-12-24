@@ -17,14 +17,16 @@ import {
 } from '@/components/ui/select'
 import { toast } from 'vue-sonner'
 import { Settings, Bell, Loader2 } from 'lucide-vue-next'
-import { usersService } from '@/services/api'
+import { usersService, organizationService } from '@/services/api'
 
 const isSubmitting = ref(false)
+const isLoading = ref(true)
 
 const generalSettings = ref({
   organization_name: 'My Organization',
   default_timezone: 'UTC',
-  date_format: 'YYYY-MM-DD'
+  date_format: 'YYYY-MM-DD',
+  mask_phone_numbers: false
 })
 
 const notificationSettings = ref({
@@ -34,6 +36,22 @@ const notificationSettings = ref({
 })
 
 onMounted(async () => {
+  // Load organization settings
+  try {
+    const orgResponse = await organizationService.getSettings()
+    const orgData = orgResponse.data.data || orgResponse.data
+    if (orgData) {
+      generalSettings.value = {
+        organization_name: orgData.name || 'My Organization',
+        default_timezone: orgData.settings?.timezone || 'UTC',
+        date_format: orgData.settings?.date_format || 'YYYY-MM-DD',
+        mask_phone_numbers: orgData.settings?.mask_phone_numbers || false
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load organization settings:', error)
+  }
+
   // Load user notification settings
   try {
     const response = await usersService.me()
@@ -47,14 +65,20 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('Failed to load user settings:', error)
+  } finally {
+    isLoading.value = false
   }
 })
 
 async function saveGeneralSettings() {
   isSubmitting.value = true
   try {
-    // API call would go here
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await organizationService.updateSettings({
+      name: generalSettings.value.organization_name,
+      timezone: generalSettings.value.default_timezone,
+      date_format: generalSettings.value.date_format,
+      mask_phone_numbers: generalSettings.value.mask_phone_numbers
+    })
     toast.success('General settings saved')
   } catch (error) {
     toast.error('Failed to save settings')
@@ -153,6 +177,17 @@ async function saveNotificationSettings() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <Separator />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium">Mask Phone Numbers</p>
+                    <p class="text-sm text-muted-foreground">Hide phone numbers showing only last 4 digits</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.mask_phone_numbers"
+                    @update:checked="generalSettings.mask_phone_numbers = $event"
+                  />
                 </div>
                 <div class="flex justify-end">
                   <Button variant="outline" size="sm" @click="saveGeneralSettings" :disabled="isSubmitting">

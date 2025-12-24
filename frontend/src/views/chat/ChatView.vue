@@ -64,6 +64,7 @@ import {
   Play
 } from 'lucide-vue-next'
 import { formatTime, getInitials, truncate } from '@/lib/utils'
+import { useColorMode } from '@/composables/useColorMode'
 import CannedResponsePicker from '@/components/chat/CannedResponsePicker.vue'
 
 const route = useRoute()
@@ -72,6 +73,7 @@ const contactsStore = useContactsStore()
 const authStore = useAuthStore()
 const usersStore = useUsersStore()
 const transfersStore = useTransfersStore()
+const { isDark } = useColorMode()
 
 const messageInput = ref('')
 const messagesEndRef = ref<HTMLElement | null>(null)
@@ -949,6 +951,7 @@ async function sendMediaMessage() {
                         <EmojiPicker
                           :native="true"
                           :disable-skin-tones="true"
+                          :theme="isDark ? 'dark' : 'light'"
                           @select="insertEmoji($event.i)"
                         />
                       </PopoverContent>
