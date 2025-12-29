@@ -17,17 +17,23 @@ type AgentAnalyticsSummary struct {
 	AvgFirstResponseMins  float64          `json:"avg_first_response_mins"`
 	AvgResolutionMins     float64          `json:"avg_resolution_mins"`
 	TransfersBySource     map[string]int64 `json:"transfers_by_source"`
+	TotalBreakTimeMins    float64          `json:"total_break_time_mins"`
+	BreakCount            int64            `json:"break_count"`
 }
 
 // AgentPerformanceStats represents performance metrics for an agent
 type AgentPerformanceStats struct {
-	AgentID              string  `json:"agent_id"`
-	AgentName            string  `json:"agent_name"`
-	AvgFirstResponseMins float64 `json:"avg_first_response_mins"`
-	AvgResolutionMins    float64 `json:"avg_resolution_mins"`
-	TransfersHandled     int64   `json:"transfers_handled"`
-	ActiveTransfers      int64   `json:"active_transfers"`
-	MessagesSent         int64   `json:"messages_sent"`
+	AgentID              string   `json:"agent_id"`
+	AgentName            string   `json:"agent_name"`
+	AvgFirstResponseMins float64  `json:"avg_first_response_mins"`
+	AvgResolutionMins    float64  `json:"avg_resolution_mins"`
+	TransfersHandled     int64    `json:"transfers_handled"`
+	ActiveTransfers      int64    `json:"active_transfers"`
+	MessagesSent         int64    `json:"messages_sent"`
+	TotalBreakTimeMins   float64  `json:"total_break_time_mins"`
+	BreakCount           int64    `json:"break_count"`
+	IsAvailable          bool     `json:"is_available"`
+	CurrentBreakStart    *string  `json:"current_break_start,omitempty"`
 }
 
 // TrendPoint represents a data point for time-series charts
@@ -118,6 +124,9 @@ func (a *App) GetAgentAnalytics(r *fastglue.Request) error {
 		a.calculateSummaryStats(orgID, periodStart, periodEnd, &response.Summary)
 		response.TrendData = a.calculateTrendData(orgID, periodStart, periodEnd, groupBy, nil)
 		response.AgentStats = a.calculateAllAgentStats(orgID, periodStart, periodEnd)
+		// Also include current user's stats (for their own break time tracking)
+		myStats := a.calculateAgentStats(orgID, userID, periodStart, periodEnd)
+		response.MyStats = &myStats
 	}
 
 	return r.SendEnvelope(response)
@@ -302,6 +311,9 @@ func (a *App) calculateAgentSummaryStats(orgID, agentID uuid.UUID, start, end ti
 	for _, sc := range sourceCounts {
 		summary.TransfersBySource[sc.Source] = sc.Count
 	}
+
+	// Calculate break time
+	summary.TotalBreakTimeMins, summary.BreakCount = a.calculateBreakTime(agentID, start, end)
 }
 
 func (a *App) calculateAgentStats(orgID, agentID uuid.UUID, start, end time.Time) AgentPerformanceStats {
@@ -309,10 +321,11 @@ func (a *App) calculateAgentStats(orgID, agentID uuid.UUID, start, end time.Time
 		AgentID: agentID.String(),
 	}
 
-	// Get agent name
+	// Get agent name and availability
 	var agent models.User
 	if a.DB.Where("id = ?", agentID).First(&agent).Error == nil {
 		stats.AgentName = agent.FullName
+		stats.IsAvailable = agent.IsAvailable
 	}
 
 	// Transfers handled (resumed)
@@ -345,6 +358,19 @@ func (a *App) calculateAgentStats(orgID, agentID uuid.UUID, start, end time.Time
 		Scan(&resolutionTimeResult)
 	stats.AvgResolutionMins = resolutionTimeResult.Avg
 
+	// Calculate break time from availability logs
+	stats.TotalBreakTimeMins, stats.BreakCount = a.calculateBreakTime(agentID, start, end)
+
+	// Check if currently on break and get break start time
+	if !stats.IsAvailable {
+		var currentBreak models.UserAvailabilityLog
+		if a.DB.Where("user_id = ? AND is_available = false AND ended_at IS NULL", agentID).
+			Order("started_at DESC").First(&currentBreak).Error == nil {
+			breakStart := currentBreak.StartedAt.Format(time.RFC3339)
+			stats.CurrentBreakStart = &breakStart
+		}
+	}
+
 	return stats
 }
 
@@ -360,6 +386,43 @@ func (a *App) calculateAllAgentStats(orgID uuid.UUID, start, end time.Time) []Ag
 	}
 
 	return stats
+}
+
+// calculateBreakTime calculates total break time and count for an agent within a time period
+func (a *App) calculateBreakTime(agentID uuid.UUID, start, end time.Time) (totalMins float64, count int64) {
+	// Get all "away" periods that overlap with the time range
+	var logs []models.UserAvailabilityLog
+	a.DB.Where("user_id = ? AND is_available = false AND started_at <= ? AND (ended_at >= ? OR ended_at IS NULL)",
+		agentID, end, start).
+		Find(&logs)
+
+	for _, log := range logs {
+		// Calculate the overlap with our time range
+		logStart := log.StartedAt
+		if logStart.Before(start) {
+			logStart = start
+		}
+
+		var logEnd time.Time
+		if log.EndedAt != nil {
+			logEnd = *log.EndedAt
+		} else {
+			// Still on break, use current time but cap at end of period
+			logEnd = time.Now()
+		}
+		if logEnd.After(end) {
+			logEnd = end
+		}
+
+		// Add duration in minutes
+		if logEnd.After(logStart) {
+			duration := logEnd.Sub(logStart).Minutes()
+			totalMins += duration
+			count++
+		}
+	}
+
+	return totalMins, count
 }
 
 func (a *App) calculateTrendData(orgID uuid.UUID, start, end time.Time, groupBy string, agentID *uuid.UUID) []TrendPoint {

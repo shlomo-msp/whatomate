@@ -29,6 +29,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
   const refreshToken = ref<string | null>(null)
+  const breakStartedAt = ref<string | null>(null)
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const userRole = computed(() => user.value?.role || 'agent')
@@ -121,10 +122,25 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function setAvailability(available: boolean) {
+  function setAvailability(available: boolean, breakStart?: string | null) {
     if (user.value) {
       user.value = { ...user.value, is_available: available }
       localStorage.setItem('user', JSON.stringify(user.value))
+    }
+    // Track break start time
+    if (!available && breakStart) {
+      breakStartedAt.value = breakStart
+      localStorage.setItem('break_started_at', breakStart)
+    } else if (available) {
+      breakStartedAt.value = null
+      localStorage.removeItem('break_started_at')
+    }
+  }
+
+  function restoreBreakTime() {
+    const stored = localStorage.getItem('break_started_at')
+    if (stored && !isAvailable.value) {
+      breakStartedAt.value = stored
     }
   }
 
@@ -132,6 +148,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     token,
     refreshToken,
+    breakStartedAt,
     isAuthenticated,
     userRole,
     organizationId,
@@ -140,6 +157,7 @@ export const useAuthStore = defineStore('auth', () => {
     setAuth,
     clearAuth,
     restoreSession,
+    restoreBreakTime,
     login,
     register,
     logout,

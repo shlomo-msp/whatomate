@@ -82,6 +82,9 @@ func GetMigrationModels() []MigrationModel {
 		{"AIContext", &models.AIContext{}},
 		{"AgentTransfer", &models.AgentTransfer{}},
 
+		// User tracking
+		{"UserAvailabilityLog", &models.UserAvailabilityLog{}},
+
 		// Canned responses
 		{"CannedResponse", &models.CannedResponse{}},
 	}
@@ -188,6 +191,8 @@ func getIndexes() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_canned_responses_org_name ON canned_responses(organization_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_canned_responses_active ON canned_responses(organization_id, is_active, usage_count DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_webhooks_org_active ON webhooks(organization_id, is_active)`,
+		`CREATE INDEX IF NOT EXISTS idx_availability_logs_user_time ON user_availability_logs(user_id, started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_availability_logs_org_time ON user_availability_logs(organization_id, started_at DESC)`,
 	}
 }
 
@@ -236,6 +241,10 @@ func CreateIndexes(db *gorm.DB) error {
 
 		// Webhooks indexes
 		`CREATE INDEX IF NOT EXISTS idx_webhooks_org_active ON webhooks(organization_id, is_active)`,
+
+		// User availability logs indexes
+		`CREATE INDEX IF NOT EXISTS idx_availability_logs_user_time ON user_availability_logs(user_id, started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_availability_logs_org_time ON user_availability_logs(organization_id, started_at DESC)`,
 	}
 
 	for _, idx := range indexes {

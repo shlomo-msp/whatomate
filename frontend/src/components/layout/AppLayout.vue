@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usersService } from '@/services/api'
@@ -52,8 +52,9 @@ const { colorMode, isDark, setColorMode } = useColorMode()
 const handleAvailabilityChange = async (checked: boolean) => {
   isUpdatingAvailability.value = true
   try {
-    await usersService.updateAvailability(checked)
-    authStore.setAvailability(checked)
+    const response = await usersService.updateAvailability(checked)
+    const data = response.data.data
+    authStore.setAvailability(checked, data.break_started_at)
     toast.success(checked ? 'Available' : 'Away', {
       description: checked
         ? 'You are now available to receive transfers'
@@ -67,6 +68,56 @@ const handleAvailabilityChange = async (checked: boolean) => {
     isUpdatingAvailability.value = false
   }
 }
+
+// Calculate break duration for display
+const breakDuration = ref('')
+let breakTimerInterval: ReturnType<typeof setInterval> | null = null
+
+const updateBreakDuration = () => {
+  if (!authStore.breakStartedAt) {
+    breakDuration.value = ''
+    return
+  }
+  const start = new Date(authStore.breakStartedAt)
+  const now = new Date()
+  const diffMs = now.getTime() - start.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const hours = Math.floor(diffMins / 60)
+  const mins = diffMins % 60
+
+  if (hours > 0) {
+    breakDuration.value = `${hours}h ${mins}m`
+  } else {
+    breakDuration.value = `${mins}m`
+  }
+}
+
+// Start/stop break timer based on availability
+watch(() => authStore.isAvailable, (available) => {
+  if (!available && authStore.breakStartedAt) {
+    updateBreakDuration()
+    breakTimerInterval = setInterval(updateBreakDuration, 60000) // Update every minute
+  } else if (breakTimerInterval) {
+    clearInterval(breakTimerInterval)
+    breakTimerInterval = null
+    breakDuration.value = ''
+  }
+}, { immediate: true })
+
+// Restore break time on mount
+onMounted(() => {
+  authStore.restoreBreakTime()
+  if (!authStore.isAvailable && authStore.breakStartedAt) {
+    updateBreakDuration()
+    breakTimerInterval = setInterval(updateBreakDuration, 60000)
+  }
+})
+
+onUnmounted(() => {
+  if (breakTimerInterval) {
+    clearInterval(breakTimerInterval)
+  }
+})
 
 // Define all navigation items with role requirements
 const allNavItems = [
@@ -279,6 +330,9 @@ const handleLogout = async () => {
                 <Badge :variant="authStore.isAvailable ? 'default' : 'secondary'" class="text-[10px] px-1.5 py-0">
                   {{ authStore.isAvailable ? 'Available' : 'Away' }}
                 </Badge>
+                <span v-if="!authStore.isAvailable && breakDuration" class="text-[10px] text-muted-foreground">
+                  {{ breakDuration }}
+                </span>
               </div>
               <Switch
                 :checked="authStore.isAvailable"

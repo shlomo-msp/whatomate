@@ -120,6 +120,23 @@ func (User) TableName() string {
 	return "users"
 }
 
+// UserAvailabilityLog tracks user availability changes for break time calculation
+type UserAvailabilityLog struct {
+	ID             uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID         uuid.UUID  `gorm:"type:uuid;index;not null" json:"user_id"`
+	OrganizationID uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	IsAvailable    bool       `gorm:"not null" json:"is_available"`
+	StartedAt      time.Time  `gorm:"not null" json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"` // null means current status
+
+	// Relations
+	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
+func (UserAvailabilityLog) TableName() string {
+	return "user_availability_logs"
+}
+
 // APIKey represents an API key for programmatic access
 type APIKey struct {
 	BaseModel

@@ -34,6 +34,7 @@ type ContactResponse struct {
 	LastMessageAt      *time.Time `json:"last_message_at"`
 	LastMessagePreview string     `json:"last_message_preview"`
 	UnreadCount        int        `json:"unread_count"`
+	AssignedUserID     *uuid.UUID `json:"assigned_user_id,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -137,6 +138,7 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			LastMessageAt:      c.LastMessageAt,
 			LastMessagePreview: c.LastMessagePreview,
 			UnreadCount:        int(unreadCount),
+			AssignedUserID:     c.AssignedUserID,
 			CreatedAt:          c.CreatedAt,
 			UpdatedAt:          c.UpdatedAt,
 		}
@@ -206,6 +208,7 @@ func (a *App) GetContact(r *fastglue.Request) error {
 		LastMessageAt:      contact.LastMessageAt,
 		LastMessagePreview: contact.LastMessagePreview,
 		UnreadCount:        int(unreadCount),
+		AssignedUserID:     contact.AssignedUserID,
 		CreatedAt:          contact.CreatedAt,
 		UpdatedAt:          contact.UpdatedAt,
 	}

@@ -134,6 +134,19 @@ const assignableUsers = computed(() => {
   return usersStore.users.filter(u => u.is_active)
 })
 
+// Search state for assignment dialog
+const assignSearchQuery = ref('')
+
+// Filtered users for assignment dialog
+const filteredAssignableUsers = computed(() => {
+  const query = assignSearchQuery.value.toLowerCase().trim()
+  if (!query) return assignableUsers.value
+  return assignableUsers.value.filter(u =>
+    u.full_name.toLowerCase().includes(query) ||
+    u.email.toLowerCase().includes(query)
+  )
+})
+
 // Initialize WebSocket connection
 function initWebSocket() {
   const token = localStorage.getItem('auth_token')
@@ -287,6 +300,11 @@ async function assignContactToUser(userId: string | null) {
   try {
     await contactsService.assign(contactsStore.currentContact.id, userId)
     toast.success(userId ? 'Contact assigned successfully' : 'Contact unassigned')
+    // Update current contact with new assignment
+    contactsStore.currentContact = {
+      ...contactsStore.currentContact,
+      assigned_user_id: userId || undefined
+    }
     // Refresh contacts list
     await contactsStore.fetchContacts()
   } catch (error: any) {
@@ -1021,7 +1039,7 @@ async function sendMediaMessage() {
     </div>
 
     <!-- Assign Contact Dialog -->
-    <Dialog v-model:open="isAssignDialogOpen">
+    <Dialog v-model:open="isAssignDialogOpen" @update:open="(open) => !open && (assignSearchQuery = '')">
       <DialogContent class="max-w-sm">
         <DialogHeader>
           <DialogTitle>Assign Contact</DialogTitle>
@@ -1029,8 +1047,18 @@ async function sendMediaMessage() {
             Select a team member to assign this contact to.
           </DialogDescription>
         </DialogHeader>
-        <div class="py-4 space-y-2">
+        <div class="py-4 space-y-3">
+          <!-- Search input -->
+          <div class="relative">
+            <Search class="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              v-model="assignSearchQuery"
+              placeholder="Search users..."
+              class="pl-9 h-9"
+            />
+          </div>
           <Button
+            v-if="contactsStore.currentContact?.assigned_user_id"
             variant="outline"
             class="w-full justify-start"
             @click="assignContactToUser(null); isAssignDialogOpen = false"
@@ -1039,19 +1067,30 @@ async function sendMediaMessage() {
             Unassign
           </Button>
           <Separator />
-          <Button
-            v-for="user in assignableUsers"
-            :key="user.id"
-            variant="ghost"
-            class="w-full justify-start"
-            @click="assignContactToUser(user.id); isAssignDialogOpen = false"
-          >
-            <User class="mr-2 h-4 w-4" />
-            <span>{{ user.full_name }}</span>
-            <Badge variant="outline" class="ml-auto text-xs">
-              {{ user.role }}
-            </Badge>
-          </Button>
+          <ScrollArea class="max-h-[280px]">
+            <div class="space-y-1">
+              <Button
+                v-for="user in filteredAssignableUsers"
+                :key="user.id"
+                :variant="contactsStore.currentContact?.assigned_user_id === user.id ? 'secondary' : 'ghost'"
+                class="w-full justify-start"
+                @click="assignContactToUser(user.id); isAssignDialogOpen = false"
+              >
+                <User class="mr-2 h-4 w-4" />
+                <span>{{ user.full_name }}</span>
+                <Check
+                  v-if="contactsStore.currentContact?.assigned_user_id === user.id"
+                  class="ml-auto h-4 w-4 text-primary"
+                />
+                <Badge v-else variant="outline" class="ml-auto text-xs">
+                  {{ user.role }}
+                </Badge>
+              </Button>
+              <p v-if="filteredAssignableUsers.length === 0" class="text-sm text-muted-foreground text-center py-4">
+                No users found
+              </p>
+            </div>
+          </ScrollArea>
         </div>
       </DialogContent>
     </Dialog>

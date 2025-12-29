@@ -44,7 +44,8 @@ import {
   BarChart3,
   Activity,
   ChevronsUpDown,
-  Check
+  Check,
+  Coffee
 } from 'lucide-vue-next'
 import type { DateRange } from 'reka-ui'
 import { CalendarDate } from '@internationalized/date'
@@ -84,6 +85,8 @@ interface AgentAnalyticsSummary {
   avg_first_response_mins: number
   avg_resolution_mins: number
   transfers_by_source: Record<string, number>
+  total_break_time_mins: number
+  break_count: number
 }
 
 interface AgentPerformanceStats {
@@ -94,6 +97,10 @@ interface AgentPerformanceStats {
   transfers_handled: number
   active_transfers: number
   messages_sent: number
+  total_break_time_mins: number
+  break_count: number
+  is_available: boolean
+  current_break_start?: string
 }
 
 interface TrendPoint {
@@ -528,9 +535,9 @@ const displayStats = computed(() => {
     <ScrollArea class="flex-1">
       <div class="p-6 space-y-6">
         <!-- Stats Cards -->
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <template v-if="isLoading">
-            <Card v-for="i in 4" :key="i">
+            <Card v-for="i in 5" :key="i">
               <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                 <Skeleton class="h-4 w-24" />
                 <Skeleton class="h-5 w-5 rounded" />
@@ -550,7 +557,9 @@ const displayStats = computed(() => {
               </CardHeader>
               <CardContent>
                 <div class="text-2xl font-bold">
-                  {{ analytics.my_stats?.transfers_handled ?? analytics.summary?.total_transfers_handled ?? 0 }}
+                  {{ selectedAgentId === 'all'
+                    ? (analytics.summary?.total_transfers_handled ?? 0)
+                    : (analytics.my_stats?.transfers_handled ?? 0) }}
                 </div>
                 <p class="text-xs text-muted-foreground">Completed conversations</p>
               </CardContent>
@@ -564,7 +573,9 @@ const displayStats = computed(() => {
               </CardHeader>
               <CardContent>
                 <div class="text-2xl font-bold">
-                  {{ analytics.my_stats?.active_transfers ?? analytics.summary?.active_transfers ?? 0 }}
+                  {{ selectedAgentId === 'all'
+                    ? (analytics.summary?.active_transfers ?? 0)
+                    : (analytics.my_stats?.active_transfers ?? 0) }}
                 </div>
                 <p class="text-xs text-muted-foreground">Currently in progress</p>
               </CardContent>
@@ -578,7 +589,9 @@ const displayStats = computed(() => {
               </CardHeader>
               <CardContent>
                 <div class="text-2xl font-bold">
-                  {{ formatMinutes(analytics.my_stats?.avg_resolution_mins ?? analytics.summary?.avg_resolution_mins ?? 0) }}
+                  {{ formatMinutes(selectedAgentId === 'all'
+                    ? (analytics.summary?.avg_resolution_mins ?? 0)
+                    : (analytics.my_stats?.avg_resolution_mins ?? 0)) }}
                 </div>
                 <p class="text-xs text-muted-foreground">Time to resolve</p>
               </CardContent>
@@ -607,6 +620,22 @@ const displayStats = computed(() => {
                   {{ analytics.my_stats?.messages_sent || 0 }}
                 </div>
                 <p class="text-xs text-muted-foreground">Outgoing messages</p>
+              </CardContent>
+            </Card>
+
+            <!-- Break Time -->
+            <Card>
+              <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle class="text-sm font-medium">Break Time</CardTitle>
+                <Coffee class="h-5 w-5 text-amber-500" />
+              </CardHeader>
+              <CardContent>
+                <div class="text-2xl font-bold">
+                  {{ formatMinutes(analytics.my_stats?.total_break_time_mins ?? analytics.summary?.total_break_time_mins ?? 0) }}
+                </div>
+                <p class="text-xs text-muted-foreground">
+                  {{ analytics.my_stats?.break_count ?? analytics.summary?.break_count ?? 0 }} breaks taken
+                </p>
               </CardContent>
             </Card>
           </template>

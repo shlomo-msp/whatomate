@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
@@ -425,6 +427,11 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
+	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
+	if !ok {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
 	var user models.User
 	if err := a.DB.Where("id = ?", userID).First(&user).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "User not found", nil, "")
@@ -433,6 +440,28 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 	var req AvailabilityRequest
 	if err := r.Decode(&req, "json"); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	// Only log if status is actually changing
+	if user.IsAvailable != req.IsAvailable {
+		now := time.Now()
+
+		// End the previous availability log (if exists)
+		a.DB.Model(&models.UserAvailabilityLog{}).
+			Where("user_id = ? AND ended_at IS NULL", userID).
+			Update("ended_at", now)
+
+		// Create new availability log
+		log := models.UserAvailabilityLog{
+			UserID:         userID,
+			OrganizationID: orgID,
+			IsAvailable:    req.IsAvailable,
+			StartedAt:      now,
+		}
+		if err := a.DB.Create(&log).Error; err != nil {
+			a.Log.Error("Failed to create availability log", "error", err)
+			// Continue anyway - logging failure shouldn't block availability update
+		}
 	}
 
 	user.IsAvailable = req.IsAvailable
@@ -447,9 +476,20 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 		status = "away"
 	}
 
+	// Get the current break start time if away
+	var breakStartedAt *time.Time
+	if !req.IsAvailable {
+		var currentLog models.UserAvailabilityLog
+		if err := a.DB.Where("user_id = ? AND is_available = false AND ended_at IS NULL", userID).
+			Order("started_at DESC").First(&currentLog).Error; err == nil {
+			breakStartedAt = &currentLog.StartedAt
+		}
+	}
+
 	return r.SendEnvelope(map[string]interface{}{
-		"message":      "Availability updated successfully",
-		"is_available": user.IsAvailable,
-		"status":       status,
+		"message":          "Availability updated successfully",
+		"is_available":     user.IsAvailable,
+		"status":           status,
+		"break_started_at": breakStartedAt,
 	})
 }
