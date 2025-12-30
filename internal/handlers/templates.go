@@ -431,13 +431,24 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 			}
 		}
 
-		// Upsert
+		// Upsert (including soft-deleted templates to restore them)
 		existing := models.Template{}
-		if err := a.DB.Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
+		if err := a.DB.Unscoped().Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
 			orgID, account.Name, template.Name, template.Language).First(&existing).Error; err == nil {
-			// Update existing
+			// Update existing and restore if soft-deleted (explicitly set deleted_at to NULL)
 			template.ID = existing.ID
-			a.DB.Save(&template)
+			a.DB.Unscoped().Model(&template).Updates(map[string]interface{}{
+				"meta_template_id": template.MetaTemplateID,
+				"display_name":     template.DisplayName,
+				"category":         template.Category,
+				"status":           template.Status,
+				"header_type":      template.HeaderType,
+				"header_content":   template.HeaderContent,
+				"body_content":     template.BodyContent,
+				"footer_content":   template.FooterContent,
+				"buttons":          template.Buttons,
+				"deleted_at":       nil, // Restore soft-deleted template
+			})
 		} else {
 			// Create new
 			a.DB.Create(&template)
