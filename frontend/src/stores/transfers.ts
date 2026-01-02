@@ -8,7 +8,7 @@ export interface AgentTransfer {
   contact_name: string
   phone_number: string
   whatsapp_account: string
-  status: 'active' | 'resumed'
+  status: 'active' | 'resumed' | 'expired'
   source: 'manual' | 'flow' | 'keyword'
   agent_id?: string
   agent_name?: string
@@ -21,6 +21,50 @@ export interface AgentTransfer {
   resumed_at?: string
   resumed_by?: string
   resumed_by_name?: string
+  // SLA fields
+  sla_response_deadline?: string
+  sla_resolution_deadline?: string
+  sla_breached: boolean
+  sla_breached_at?: string
+  escalation_level: number
+  escalated_at?: string
+  picked_up_at?: string
+  expires_at?: string
+}
+
+// Helper to determine SLA status
+export type SLAStatus = 'ok' | 'warning' | 'breached' | 'expired'
+
+export function getSLAStatus(transfer: AgentTransfer): SLAStatus {
+  if (transfer.status === 'expired') return 'expired'
+  if (transfer.sla_breached) return 'breached'
+
+  // Check deadline status (even if backend hasn't marked as breached yet)
+  if (transfer.sla_response_deadline && !transfer.picked_up_at) {
+    const deadline = new Date(transfer.sla_response_deadline)
+    const now = new Date()
+    const timeLeft = deadline.getTime() - now.getTime()
+
+    // Deadline passed - treat as breached
+    if (timeLeft <= 0) {
+      return 'breached'
+    }
+
+    // Warning if escalated or less than 20% time remaining
+    if (transfer.escalation_level >= 1) {
+      return 'warning'
+    }
+
+    const totalTime = deadline.getTime() - new Date(transfer.transferred_at).getTime()
+    if (timeLeft < totalTime * 0.2) {
+      return 'warning'
+    }
+  }
+
+  // Check escalation even if no deadline set
+  if (transfer.escalation_level >= 1) return 'warning'
+
+  return 'ok'
 }
 
 export const useTransfersStore = defineStore('transfers', () => {

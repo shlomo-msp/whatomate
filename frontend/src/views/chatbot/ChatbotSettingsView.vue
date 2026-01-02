@@ -25,8 +25,8 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { toast } from 'vue-sonner'
-import { Settings, Bot, Loader2, Brain, Plus, X, Clock, ArrowLeft } from 'lucide-vue-next'
-import { chatbotService } from '@/services/api'
+import { Settings, Bot, Loader2, Brain, Plus, X, Clock, ArrowLeft, AlertTriangle } from 'lucide-vue-next'
+import { chatbotService, usersService } from '@/services/api'
 
 interface MessageButton {
   id: string
@@ -105,6 +105,19 @@ const aiSettings = ref({
   ai_system_prompt: ''
 })
 
+const slaSettings = ref({
+  sla_enabled: false,
+  sla_response_minutes: 15,
+  sla_resolution_minutes: 60,
+  sla_escalation_minutes: 30,
+  sla_auto_close_hours: 24,
+  sla_warning_message: '',
+  sla_escalation_notify_ids: [] as string[]
+})
+
+const isSLAEnabled = ref(false)
+const availableUsers = ref<{ id: string; full_name: string }[]>([])
+
 // Separate ref for Switch to ensure reactivity
 const isAIEnabled = ref(false)
 
@@ -124,11 +137,28 @@ watch(isAIEnabled, (newValue) => {
   aiSettings.value.ai_enabled = newValue
 })
 
+// Keep slaSettings in sync with isSLAEnabled
+watch(isSLAEnabled, (newValue) => {
+  slaSettings.value.sla_enabled = newValue
+})
+
 onMounted(async () => {
-  // Load chatbot settings
+  // Load chatbot settings and users in parallel
   try {
-    const response = await chatbotService.getSettings()
-    const data = response.data.data || response.data
+    const [settingsResponse, usersResponse] = await Promise.all([
+      chatbotService.getSettings(),
+      usersService.list()
+    ])
+
+    // Load users for escalation notify selection
+    const usersData = usersResponse.data.data || usersResponse.data
+    const usersList = usersData.users || usersData || []
+    availableUsers.value = usersList.filter((u: any) => u.is_active !== false).map((u: any) => ({
+      id: u.id,
+      full_name: u.full_name
+    }))
+
+    const data = settingsResponse.data.data || settingsResponse.data
     if (data.settings) {
       // Merge loaded business hours with defaults (in case some days are missing)
       const loadedHours = data.settings.business_hours || []
@@ -160,6 +190,19 @@ onMounted(async () => {
         ai_model: data.settings.ai_model || '',
         ai_max_tokens: data.settings.ai_max_tokens || 500,
         ai_system_prompt: data.settings.ai_system_prompt || ''
+      }
+
+      // Load SLA settings
+      const slaEnabledValue = data.settings.sla_enabled === true
+      isSLAEnabled.value = slaEnabledValue
+      slaSettings.value = {
+        sla_enabled: slaEnabledValue,
+        sla_response_minutes: data.settings.sla_response_minutes || 15,
+        sla_resolution_minutes: data.settings.sla_resolution_minutes || 60,
+        sla_escalation_minutes: data.settings.sla_escalation_minutes || 30,
+        sla_auto_close_hours: data.settings.sla_auto_close_hours || 24,
+        sla_warning_message: data.settings.sla_warning_message || '',
+        sla_escalation_notify_ids: data.settings.sla_escalation_notify_ids || []
       }
     }
   } catch (error) {
@@ -239,6 +282,39 @@ async function saveAISettings() {
     isSubmitting.value = false
   }
 }
+
+async function saveSLASettings() {
+  isSubmitting.value = true
+  try {
+    await chatbotService.updateSettings({
+      sla_enabled: slaSettings.value.sla_enabled,
+      sla_response_minutes: slaSettings.value.sla_response_minutes,
+      sla_resolution_minutes: slaSettings.value.sla_resolution_minutes,
+      sla_escalation_minutes: slaSettings.value.sla_escalation_minutes,
+      sla_auto_close_hours: slaSettings.value.sla_auto_close_hours,
+      sla_warning_message: slaSettings.value.sla_warning_message,
+      sla_escalation_notify_ids: slaSettings.value.sla_escalation_notify_ids
+    })
+    toast.success('SLA settings saved')
+  } catch (error) {
+    toast.error('Failed to save SLA settings')
+  } finally {
+    isSubmitting.value = false
+  }
+}
+
+function toggleEscalationUser(userId: string) {
+  const index = slaSettings.value.sla_escalation_notify_ids.indexOf(userId)
+  if (index === -1) {
+    slaSettings.value.sla_escalation_notify_ids.push(userId)
+  } else {
+    slaSettings.value.sla_escalation_notify_ids.splice(index, 1)
+  }
+}
+
+function isUserSelected(userId: string): boolean {
+  return slaSettings.value.sla_escalation_notify_ids.includes(userId)
+}
 </script>
 
 <template>
@@ -273,7 +349,7 @@ async function saveAISettings() {
     <ScrollArea class="flex-1">
       <div class="p-6 space-y-4 max-w-4xl mx-auto">
         <Tabs default-value="chatbot" class="w-full">
-          <TabsList class="grid w-full grid-cols-3 mb-6">
+          <TabsList class="grid w-full grid-cols-4 mb-6">
             <TabsTrigger value="chatbot">
               <Bot class="h-4 w-4 mr-2" />
               Chatbot
@@ -281,6 +357,10 @@ async function saveAISettings() {
             <TabsTrigger value="business-hours">
               <Clock class="h-4 w-4 mr-2" />
               Business Hours
+            </TabsTrigger>
+            <TabsTrigger value="sla">
+              <AlertTriangle class="h-4 w-4 mr-2" />
+              SLA
             </TabsTrigger>
             <TabsTrigger value="ai">
               <Brain class="h-4 w-4 mr-2" />
@@ -527,6 +607,132 @@ async function saveAISettings() {
 
                 <div class="flex justify-end pt-2">
                   <Button variant="outline" size="sm" @click="saveBusinessHoursSettings" :disabled="isSubmitting">
+                    <Loader2 v-if="isSubmitting" class="mr-2 h-4 w-4 animate-spin" />
+                    Save Changes
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <!-- SLA Settings Tab -->
+          <TabsContent value="sla">
+            <Card>
+              <CardHeader>
+                <CardTitle>SLA Settings</CardTitle>
+                <CardDescription>Configure Service Level Agreements for agent transfers</CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium">Enable SLA Tracking</p>
+                    <p class="text-sm text-muted-foreground">Track response times and escalate overdue transfers</p>
+                  </div>
+                  <Switch
+                    :checked="isSLAEnabled"
+                    @update:checked="(val: boolean) => isSLAEnabled = val"
+                  />
+                </div>
+
+                <div v-if="isSLAEnabled" class="space-y-4 pt-2">
+                  <Separator />
+
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                      <Label for="sla_response_minutes">Response Time (minutes)</Label>
+                      <Input
+                        id="sla_response_minutes"
+                        v-model.number="slaSettings.sla_response_minutes"
+                        type="number"
+                        min="1"
+                        max="1440"
+                      />
+                      <p class="text-xs text-muted-foreground">Time for agent to pick up transfer</p>
+                    </div>
+                    <div class="space-y-2">
+                      <Label for="sla_escalation_minutes">Escalation Time (minutes)</Label>
+                      <Input
+                        id="sla_escalation_minutes"
+                        v-model.number="slaSettings.sla_escalation_minutes"
+                        type="number"
+                        min="1"
+                        max="1440"
+                      />
+                      <p class="text-xs text-muted-foreground">Time before escalating to notify contacts</p>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                      <Label for="sla_resolution_minutes">Resolution Time (minutes)</Label>
+                      <Input
+                        id="sla_resolution_minutes"
+                        v-model.number="slaSettings.sla_resolution_minutes"
+                        type="number"
+                        min="1"
+                        max="10080"
+                      />
+                      <p class="text-xs text-muted-foreground">Expected time to resolve the transfer</p>
+                    </div>
+                    <div class="space-y-2">
+                      <Label for="sla_auto_close_hours">Auto-Close (hours)</Label>
+                      <Input
+                        id="sla_auto_close_hours"
+                        v-model.number="slaSettings.sla_auto_close_hours"
+                        type="number"
+                        min="1"
+                        max="168"
+                      />
+                      <p class="text-xs text-muted-foreground">Auto-close transfer if no response (0 to disable)</p>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div class="space-y-2">
+                    <Label for="sla_warning_message">Customer Warning Message</Label>
+                    <Textarea
+                      id="sla_warning_message"
+                      v-model="slaSettings.sla_warning_message"
+                      placeholder="We're experiencing higher than usual wait times. An agent will be with you shortly."
+                      :rows="2"
+                    />
+                    <p class="text-xs text-muted-foreground">Message sent to customer when SLA is at risk (leave empty to disable)</p>
+                  </div>
+
+                  <Separator />
+
+                  <div class="space-y-2">
+                    <Label>Escalation Notify Contacts</Label>
+                    <p class="text-xs text-muted-foreground mb-2">Select users to notify when transfers are escalated</p>
+                    <div class="border rounded-lg p-3 max-h-48 overflow-y-auto space-y-2">
+                      <div
+                        v-for="user in availableUsers"
+                        :key="user.id"
+                        class="flex items-center gap-3 p-2 rounded hover:bg-muted cursor-pointer"
+                        @click="toggleEscalationUser(user.id)"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="isUserSelected(user.id)"
+                          class="h-4 w-4 rounded border-gray-300"
+                          @click.stop
+                          @change="toggleEscalationUser(user.id)"
+                        />
+                        <span class="text-sm">{{ user.full_name }}</span>
+                      </div>
+                      <div v-if="availableUsers.length === 0" class="text-sm text-muted-foreground text-center py-2">
+                        No users available
+                      </div>
+                    </div>
+                    <p v-if="slaSettings.sla_escalation_notify_ids.length > 0" class="text-xs text-muted-foreground">
+                      {{ slaSettings.sla_escalation_notify_ids.length }} user(s) selected
+                    </p>
+                  </div>
+                </div>
+
+                <div class="flex justify-end pt-2">
+                  <Button variant="outline" size="sm" @click="saveSLASettings" :disabled="isSubmitting">
                     <Loader2 v-if="isSubmitting" class="mr-2 h-4 w-4 animate-spin" />
                     Save Changes
                   </Button>

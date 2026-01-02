@@ -47,6 +47,16 @@ type AgentTransferResponse struct {
 	ResumedAt         *string `json:"resumed_at,omitempty"`
 	ResumedBy         *string `json:"resumed_by,omitempty"`
 	ResumedByName     *string `json:"resumed_by_name,omitempty"`
+
+	// SLA fields
+	SLAResponseDeadline   *string `json:"sla_response_deadline,omitempty"`
+	SLAResolutionDeadline *string `json:"sla_resolution_deadline,omitempty"`
+	SLABreached           bool    `json:"sla_breached"`
+	SLABreachedAt         *string `json:"sla_breached_at,omitempty"`
+	EscalationLevel       int     `json:"escalation_level"`
+	EscalatedAt           *string `json:"escalated_at,omitempty"`
+	PickedUpAt            *string `json:"picked_up_at,omitempty"`
+	ExpiresAt             *string `json:"expires_at,omitempty"`
 }
 
 // ListAgentTransfers lists agent transfers for the organization
@@ -226,6 +236,34 @@ func (a *App) ListAgentTransfers(r *fastglue.Request) error {
 			}
 		}
 
+		// SLA fields
+		resp.SLABreached = t.SLABreached
+		resp.EscalationLevel = t.EscalationLevel
+		if t.SLAResponseDeadline != nil {
+			deadline := t.SLAResponseDeadline.Format(time.RFC3339)
+			resp.SLAResponseDeadline = &deadline
+		}
+		if t.SLAResolutionDeadline != nil {
+			deadline := t.SLAResolutionDeadline.Format(time.RFC3339)
+			resp.SLAResolutionDeadline = &deadline
+		}
+		if t.SLABreachedAt != nil {
+			breachedAt := t.SLABreachedAt.Format(time.RFC3339)
+			resp.SLABreachedAt = &breachedAt
+		}
+		if t.EscalatedAt != nil {
+			escalatedAt := t.EscalatedAt.Format(time.RFC3339)
+			resp.EscalatedAt = &escalatedAt
+		}
+		if t.PickedUpAt != nil {
+			pickedUpAt := t.PickedUpAt.Format(time.RFC3339)
+			resp.PickedUpAt = &pickedUpAt
+		}
+		if t.ExpiresAt != nil {
+			expiresAt := t.ExpiresAt.Format(time.RFC3339)
+			resp.ExpiresAt = &expiresAt
+		}
+
 		response[i] = resp
 	}
 
@@ -350,6 +388,14 @@ func (a *App) CreateAgentTransfer(r *fastglue.Request) error {
 		TransferredAt:       time.Now(),
 	}
 
+	// Set SLA deadlines if SLA is enabled
+	a.SetSLADeadlines(&transfer, &settings)
+
+	// If agent is already assigned, mark as picked up
+	if agentID != nil {
+		a.UpdateSLAOnPickup(&transfer)
+	}
+
 	if err := a.DB.Create(&transfer).Error; err != nil {
 		a.Log.Error("Failed to create agent transfer", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create transfer", nil, "")
@@ -436,6 +482,26 @@ func (a *App) CreateAgentTransfer(r *fastglue.Request) error {
 		if transfer.TransferredByUser != nil {
 			resp.TransferredByName = &transfer.TransferredByUser.FullName
 		}
+	}
+
+	// SLA fields
+	resp.SLABreached = transfer.SLABreached
+	resp.EscalationLevel = transfer.EscalationLevel
+	if transfer.SLAResponseDeadline != nil {
+		deadline := transfer.SLAResponseDeadline.Format(time.RFC3339)
+		resp.SLAResponseDeadline = &deadline
+	}
+	if transfer.SLAResolutionDeadline != nil {
+		deadline := transfer.SLAResolutionDeadline.Format(time.RFC3339)
+		resp.SLAResolutionDeadline = &deadline
+	}
+	if transfer.PickedUpAt != nil {
+		pickedUpAt := transfer.PickedUpAt.Format(time.RFC3339)
+		resp.PickedUpAt = &pickedUpAt
+	}
+	if transfer.ExpiresAt != nil {
+		expiresAt := transfer.ExpiresAt.Format(time.RFC3339)
+		resp.ExpiresAt = &expiresAt
 	}
 
 	return r.SendEnvelope(map[string]any{
@@ -575,6 +641,12 @@ func (a *App) AssignAgentTransfer(r *fastglue.Request) error {
 
 	// Update transfer
 	transfer.AgentID = targetAgentID
+
+	// Update SLA tracking if being assigned
+	if targetAgentID != nil && transfer.PickedUpAt == nil {
+		a.UpdateSLAOnPickup(&transfer)
+	}
+
 	if err := a.DB.Save(&transfer).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to assign transfer", nil, "")
 	}
@@ -716,6 +788,10 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	if transfer.TransferredByUserID == nil {
 		transfer.TransferredByUserID = &userID
 	}
+
+	// Update SLA tracking for pickup
+	a.UpdateSLAOnPickup(&transfer)
+
 	if err := tx.Save(&transfer).Error; err != nil {
 		tx.Rollback()
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to pick transfer", nil, "")
@@ -788,6 +864,30 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 		transferredBy := transfer.TransferredByUserID.String()
 		resp.TransferredBy = &transferredBy
 		resp.TransferredByName = &agent.FullName
+	}
+
+	// SLA fields
+	resp.SLABreached = transfer.SLABreached
+	resp.EscalationLevel = transfer.EscalationLevel
+	if transfer.SLAResponseDeadline != nil {
+		deadline := transfer.SLAResponseDeadline.Format(time.RFC3339)
+		resp.SLAResponseDeadline = &deadline
+	}
+	if transfer.SLAResolutionDeadline != nil {
+		deadline := transfer.SLAResolutionDeadline.Format(time.RFC3339)
+		resp.SLAResolutionDeadline = &deadline
+	}
+	if transfer.SLABreachedAt != nil {
+		breachedAt := transfer.SLABreachedAt.Format(time.RFC3339)
+		resp.SLABreachedAt = &breachedAt
+	}
+	if transfer.PickedUpAt != nil {
+		pickedUpAt := transfer.PickedUpAt.Format(time.RFC3339)
+		resp.PickedUpAt = &pickedUpAt
+	}
+	if transfer.ExpiresAt != nil {
+		expiresAt := transfer.ExpiresAt.Format(time.RFC3339)
+		resp.ExpiresAt = &expiresAt
 	}
 
 	return r.SendEnvelope(map[string]any{
@@ -896,6 +996,13 @@ func (a *App) createTransferToQueue(account *models.WhatsAppAccount, contact *mo
 		return
 	}
 
+	// Get chatbot settings for SLA
+	var settings models.ChatbotSettings
+	a.DB.Where("organization_id = ? AND whats_app_account = ?", account.OrganizationID, account.Name).
+		Or("organization_id = ? AND whats_app_account = ''", account.OrganizationID).
+		Order("whats_app_account DESC").
+		First(&settings)
+
 	// Create unassigned transfer (goes to queue)
 	transfer := models.AgentTransfer{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
@@ -908,6 +1015,9 @@ func (a *App) createTransferToQueue(account *models.WhatsAppAccount, contact *mo
 		AgentID:         nil, // Unassigned - goes to queue
 		TransferredAt:   time.Now(),
 	}
+
+	// Set SLA deadlines
+	a.SetSLADeadlines(&transfer, &settings)
 
 	if err := a.DB.Create(&transfer).Error; err != nil {
 		a.Log.Error("Failed to create transfer to queue", "error", err, "contact_id", contact.ID, "source", source)
@@ -973,6 +1083,14 @@ func (a *App) createTransferFromKeyword(account *models.WhatsAppAccount, contact
 		Source:          "keyword",
 		AgentID:         agentID,
 		TransferredAt:   time.Now(),
+	}
+
+	// Set SLA deadlines
+	a.SetSLADeadlines(&transfer, &settings)
+
+	// If agent is already assigned, mark as picked up
+	if agentID != nil {
+		a.UpdateSLAOnPickup(&transfer)
 	}
 
 	if err := a.DB.Create(&transfer).Error; err != nil {
@@ -1130,6 +1248,13 @@ func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *mod
 		return
 	}
 
+	// Get chatbot settings for SLA
+	var settings models.ChatbotSettings
+	a.DB.Where("organization_id = ? AND whats_app_account = ?", account.OrganizationID, account.Name).
+		Or("organization_id = ? AND whats_app_account = ''", account.OrganizationID).
+		Order("whats_app_account DESC").
+		First(&settings)
+
 	// Apply team's assignment strategy
 	agentID := a.assignToTeam(teamID, account.OrganizationID)
 
@@ -1146,6 +1271,14 @@ func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *mod
 		TeamID:          &teamID,
 		Notes:           notes,
 		TransferredAt:   time.Now(),
+	}
+
+	// Set SLA deadlines
+	a.SetSLADeadlines(&transfer, &settings)
+
+	// If agent is already assigned, mark as picked up
+	if agentID != nil {
+		a.UpdateSLAOnPickup(&transfer)
 	}
 
 	if err := a.DB.Create(&transfer).Error; err != nil {

@@ -130,6 +130,12 @@ func main() {
 		}
 	}()
 
+	// Start SLA processor (runs every minute)
+	slaProcessor := handlers.NewSLAProcessor(app, time.Minute)
+	slaCtx, slaCancel := context.WithCancel(context.Background())
+	go slaProcessor.Start(slaCtx)
+	lo.Info("SLA processor started")
+
 	// Start embedded workers
 	var workers []*worker.Worker
 	var workerCancel context.CancelFunc
@@ -163,6 +169,12 @@ func main() {
 	<-quit
 
 	lo.Info("Shutting down...")
+
+	// Stop SLA processor
+	lo.Info("Stopping SLA processor...")
+	slaCancel()
+	slaProcessor.Stop()
+	lo.Info("SLA processor stopped")
 
 	// Stop workers first
 	if workerCancel != nil {

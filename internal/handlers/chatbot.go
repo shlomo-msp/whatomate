@@ -30,6 +30,14 @@ type ChatbotSettingsResponse struct {
 	AIModel               string                   `json:"ai_model"`
 	AIMaxTokens           int                      `json:"ai_max_tokens"`
 	AISystemPrompt        string                   `json:"ai_system_prompt"`
+	// SLA Settings
+	SLAEnabled             bool     `json:"sla_enabled"`
+	SLAResponseMinutes     int      `json:"sla_response_minutes"`
+	SLAResolutionMinutes   int      `json:"sla_resolution_minutes"`
+	SLAEscalationMinutes   int      `json:"sla_escalation_minutes"`
+	SLAAutoCloseHours      int      `json:"sla_auto_close_hours"`
+	SLAWarningMessage      string   `json:"sla_warning_message"`
+	SLAEscalationNotifyIDs []string `json:"sla_escalation_notify_ids"`
 }
 
 // ChatbotStatsResponse represents chatbot statistics
@@ -150,6 +158,14 @@ func (a *App) GetChatbotSettings(r *fastglue.Request) error {
 		AIModel:               settings.AIModel,
 		AIMaxTokens:           settings.AIMaxTokens,
 		AISystemPrompt:        settings.AISystemPrompt,
+		// SLA Settings
+		SLAEnabled:             settings.SLAEnabled,
+		SLAResponseMinutes:     settings.SLAResponseMinutes,
+		SLAResolutionMinutes:   settings.SLAResolutionMinutes,
+		SLAEscalationMinutes:   settings.SLAEscalationMinutes,
+		SLAAutoCloseHours:      settings.SLAAutoCloseHours,
+		SLAWarningMessage:      settings.SLAWarningMessage,
+		SLAEscalationNotifyIDs: settings.SLAEscalationNotifyIDs,
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
@@ -184,6 +200,14 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 		AIModel                    *string                    `json:"ai_model"`
 		AIMaxTokens                *int                       `json:"ai_max_tokens"`
 		AISystemPrompt             *string                    `json:"ai_system_prompt"`
+		// SLA Settings
+		SLAEnabled             *bool     `json:"sla_enabled"`
+		SLAResponseMinutes     *int      `json:"sla_response_minutes"`
+		SLAResolutionMinutes   *int      `json:"sla_resolution_minutes"`
+		SLAEscalationMinutes   *int      `json:"sla_escalation_minutes"`
+		SLAAutoCloseHours      *int      `json:"sla_auto_close_hours"`
+		SLAWarningMessage      *string   `json:"sla_warning_message"`
+		SLAEscalationNotifyIDs *[]string `json:"sla_escalation_notify_ids"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -267,6 +291,29 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	}
 	if req.AISystemPrompt != nil {
 		settings.AISystemPrompt = *req.AISystemPrompt
+	}
+
+	// SLA Settings
+	if req.SLAEnabled != nil {
+		settings.SLAEnabled = *req.SLAEnabled
+	}
+	if req.SLAResponseMinutes != nil {
+		settings.SLAResponseMinutes = *req.SLAResponseMinutes
+	}
+	if req.SLAResolutionMinutes != nil {
+		settings.SLAResolutionMinutes = *req.SLAResolutionMinutes
+	}
+	if req.SLAEscalationMinutes != nil {
+		settings.SLAEscalationMinutes = *req.SLAEscalationMinutes
+	}
+	if req.SLAAutoCloseHours != nil {
+		settings.SLAAutoCloseHours = *req.SLAAutoCloseHours
+	}
+	if req.SLAWarningMessage != nil {
+		settings.SLAWarningMessage = *req.SLAWarningMessage
+	}
+	if req.SLAEscalationNotifyIDs != nil {
+		settings.SLAEscalationNotifyIDs = *req.SLAEscalationNotifyIDs
 	}
 
 	if err := a.DB.Save(&settings).Error; err != nil {

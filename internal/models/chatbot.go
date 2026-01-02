@@ -23,6 +23,16 @@ type ChatbotSettings struct {
 	AllowAutomatedOutsideHours bool       `gorm:"default:true" json:"allow_automated_outside_hours"` // Allow flows/keywords/AI outside business hours
 	AllowAgentQueuePickup      bool       `gorm:"default:true" json:"allow_agent_queue_pickup"`      // Allow agents to pick transfers from queue
 	AssignToSameAgent          bool       `gorm:"default:true" json:"assign_to_same_agent"`          // Auto-assign transfers to contact's existing agent
+
+	// SLA Settings
+	SLAEnabled             bool `gorm:"default:false" json:"sla_enabled"`                  // Enable SLA tracking
+	SLAResponseMinutes     int  `gorm:"default:15" json:"sla_response_minutes"`            // Time to pick up transfer (default 15 min)
+	SLAResolutionMinutes   int  `gorm:"default:60" json:"sla_resolution_minutes"`          // Time to resolve transfer (default 60 min)
+	SLAEscalationMinutes   int  `gorm:"default:30" json:"sla_escalation_minutes"`          // Time before escalation (default 30 min)
+	SLAAutoCloseHours      int  `gorm:"default:24" json:"sla_auto_close_hours"`            // Auto-close stale transfers (default 24h)
+	SLAWarningMessage      string `gorm:"type:text" json:"sla_warning_message"`            // Message to customer when SLA breached
+	SLAEscalationNotifyIDs StringArray `gorm:"type:jsonb;default:'[]'" json:"sla_escalation_notify_ids"` // User IDs to notify on escalation
+
 	AIEnabled            bool        `gorm:"column:ai_enabled;default:false" json:"ai_enabled"`
 	AIProvider           string      `gorm:"column:ai_provider;size:20" json:"ai_provider"` // openai, anthropic, google
 	AIAPIKey             string      `gorm:"column:ai_api_key;type:text" json:"-"`         // encrypted
@@ -209,6 +219,18 @@ type AgentTransfer struct {
 	TransferredAt       time.Time  `gorm:"autoCreateTime" json:"transferred_at"`
 	ResumedAt           *time.Time `json:"resumed_at,omitempty"`
 	ResumedBy           *uuid.UUID `gorm:"type:uuid" json:"resumed_by,omitempty"`
+
+	// SLA Tracking
+	SLAResponseDeadline   *time.Time `gorm:"index" json:"sla_response_deadline,omitempty"`   // When pickup is due
+	SLAResolutionDeadline *time.Time `gorm:"index" json:"sla_resolution_deadline,omitempty"` // When resolution is due
+	SLAEscalationAt       *time.Time `json:"sla_escalation_at,omitempty"`                    // When escalation is due
+	ExpiresAt             *time.Time `gorm:"index" json:"expires_at,omitempty"`              // Auto-close deadline
+	PickedUpAt            *time.Time `json:"picked_up_at,omitempty"`                         // When agent first picked up
+	FirstResponseAt       *time.Time `json:"first_response_at,omitempty"`                    // When agent first responded
+	EscalationLevel       int        `gorm:"default:0" json:"escalation_level"`              // 0=normal, 1=warning, 2=escalated, 3=critical
+	EscalatedAt           *time.Time `json:"escalated_at,omitempty"`                         // When escalation occurred
+	SLABreached           bool       `gorm:"default:false" json:"sla_breached"`              // Whether SLA was breached
+	SLABreachedAt         *time.Time `json:"sla_breached_at,omitempty"`                      // When SLA was breached
 
 	// Relations
 	Organization      *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`

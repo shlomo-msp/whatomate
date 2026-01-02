@@ -35,7 +35,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { chatbotService, usersService, teamsService, type Team } from '@/services/api'
-import { useTransfersStore, type AgentTransfer } from '@/stores/transfers'
+import { useTransfersStore, type AgentTransfer, getSLAStatus, type SLAStatus } from '@/stores/transfers'
 import { useAuthStore } from '@/stores/auth'
 import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
@@ -47,7 +47,10 @@ import {
   Clock,
   Loader2,
   Users,
-  UserPlus
+  UserPlus,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -283,6 +286,37 @@ function getSourceBadge(source: string) {
       return { label: 'Manual', variant: 'default' as const }
   }
 }
+
+function getSLABadge(transfer: AgentTransfer) {
+  const status = getSLAStatus(transfer)
+  switch (status) {
+    case 'breached':
+      return { label: 'SLA Breached', variant: 'destructive' as const, icon: 'xcircle' }
+    case 'warning':
+      return { label: 'At Risk', variant: 'warning' as const, icon: 'alert' }
+    case 'expired':
+      return { label: 'Expired', variant: 'secondary' as const, icon: 'xcircle' }
+    default:
+      return { label: 'On Track', variant: 'outline' as const, icon: 'check' }
+  }
+}
+
+function formatTimeRemaining(deadline: string | undefined): string {
+  if (!deadline) return '-'
+  const now = new Date()
+  const deadlineDate = new Date(deadline)
+  const diff = deadlineDate.getTime() - now.getTime()
+
+  if (diff <= 0) return 'Overdue'
+
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(minutes / 60)
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m`
+  }
+  return `${minutes}m`
+}
 </script>
 
 <template>
@@ -504,9 +538,9 @@ function getSourceBadge(source: string) {
                         <TableHead>Contact</TableHead>
                         <TableHead>Phone</TableHead>
                         <TableHead>Team</TableHead>
-                        <TableHead>Transferred At</TableHead>
+                        <TableHead>SLA</TableHead>
+                        <TableHead>Waiting</TableHead>
                         <TableHead>Source</TableHead>
-                        <TableHead>Notes</TableHead>
                         <TableHead class="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -520,13 +554,35 @@ function getSourceBadge(source: string) {
                             {{ getTeamName(transfer.team_id) }}
                           </Badge>
                         </TableCell>
-                        <TableCell>{{ formatDate(transfer.transferred_at) }}</TableCell>
+                        <TableCell>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge :variant="getSLABadge(transfer).variant" class="cursor-help">
+                                <XCircle v-if="getSLABadge(transfer).icon === 'xcircle'" class="h-3 w-3 mr-1" />
+                                <AlertTriangle v-else-if="getSLABadge(transfer).icon === 'alert'" class="h-3 w-3 mr-1" />
+                                <CheckCircle2 v-else class="h-3 w-3 mr-1" />
+                                {{ getSLABadge(transfer).label }}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div class="text-xs space-y-1">
+                                <p v-if="transfer.sla_response_deadline">Response deadline: {{ formatDate(transfer.sla_response_deadline) }}</p>
+                                <p v-if="transfer.escalation_level > 0">Escalation level: {{ transfer.escalation_level }}</p>
+                                <p v-if="transfer.sla_breached">Breached at: {{ formatDate(transfer.sla_breached_at!) }}</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell>
+                          <span :class="{ 'text-destructive font-medium': getSLAStatus(transfer) === 'breached' }">
+                            {{ formatTimeRemaining(transfer.sla_response_deadline) }}
+                          </span>
+                        </TableCell>
                         <TableCell>
                           <Badge :variant="getSourceBadge(transfer.source).variant">
                             {{ getSourceBadge(transfer.source).label }}
                           </Badge>
                         </TableCell>
-                        <TableCell class="max-w-[200px] truncate">{{ transfer.notes || '-' }}</TableCell>
                         <TableCell class="text-right space-x-2">
                           <Button size="sm" variant="outline" @click="openAssignDialog(transfer)">
                             <UserPlus class="h-4 w-4 mr-1" />
@@ -564,7 +620,7 @@ function getSourceBadge(source: string) {
                         <TableHead>Phone</TableHead>
                         <TableHead>Assigned To</TableHead>
                         <TableHead>Team</TableHead>
-                        <TableHead>Transferred At</TableHead>
+                        <TableHead>SLA</TableHead>
                         <TableHead>Source</TableHead>
                         <TableHead class="text-right">Actions</TableHead>
                       </TableRow>
@@ -586,7 +642,26 @@ function getSourceBadge(source: string) {
                             {{ getTeamName(transfer.team_id) }}
                           </Badge>
                         </TableCell>
-                        <TableCell>{{ formatDate(transfer.transferred_at) }}</TableCell>
+                        <TableCell>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge :variant="getSLABadge(transfer).variant" class="cursor-help">
+                                <XCircle v-if="getSLABadge(transfer).icon === 'xcircle'" class="h-3 w-3 mr-1" />
+                                <AlertTriangle v-else-if="getSLABadge(transfer).icon === 'alert'" class="h-3 w-3 mr-1" />
+                                <CheckCircle2 v-else class="h-3 w-3 mr-1" />
+                                {{ getSLABadge(transfer).label }}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div class="text-xs space-y-1">
+                                <p v-if="transfer.picked_up_at">Picked up: {{ formatDate(transfer.picked_up_at) }}</p>
+                                <p v-else-if="transfer.sla_response_deadline">Response deadline: {{ formatDate(transfer.sla_response_deadline) }}</p>
+                                <p v-if="transfer.escalation_level > 0">Escalation level: {{ transfer.escalation_level }}</p>
+                                <p v-if="transfer.sla_breached">Breached at: {{ formatDate(transfer.sla_breached_at!) }}</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell>
                           <Badge :variant="getSourceBadge(transfer.source).variant">
                             {{ getSourceBadge(transfer.source).label }}
