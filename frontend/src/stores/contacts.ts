@@ -76,6 +76,13 @@ export const useContactsStore = defineStore('contacts', () => {
   const searchQuery = ref('')
   const replyingTo = ref<Message | null>(null)
 
+  // Contacts pagination
+  const contactsPage = ref(1)
+  const contactsLimit = ref(50)
+  const contactsTotal = ref(0)
+  const isLoadingMoreContacts = ref(false)
+  const hasMoreContacts = computed(() => contacts.value.length < contactsTotal.value)
+
   const filteredContacts = computed(() => {
     if (!searchQuery.value) return contacts.value
     const query = searchQuery.value.toLowerCase()
@@ -97,14 +104,48 @@ export const useContactsStore = defineStore('contacts', () => {
   async function fetchContacts(params?: { search?: string; page?: number; limit?: number }) {
     isLoading.value = true
     try {
-      const response = await contactsService.list(params)
-      // API returns { status: "success", data: { contacts: [...] } }
+      const response = await contactsService.list({
+        page: 1,
+        limit: contactsLimit.value,
+        ...params
+      })
+      // API returns { status: "success", data: { contacts: [...], total: number } }
       const data = response.data.data || response.data
       contacts.value = data.contacts || []
+      contactsTotal.value = data.total ?? contacts.value.length
+      contactsPage.value = 1
     } catch (error) {
       console.error('Failed to fetch contacts:', error)
     } finally {
       isLoading.value = false
+    }
+  }
+
+  async function loadMoreContacts() {
+    if (isLoadingMoreContacts.value || !hasMoreContacts.value) return
+
+    isLoadingMoreContacts.value = true
+    try {
+      const nextPage = contactsPage.value + 1
+      const response = await contactsService.list({
+        page: nextPage,
+        limit: contactsLimit.value
+      })
+      const data = response.data.data || response.data
+      const newContacts = data.contacts || []
+
+      if (newContacts.length > 0) {
+        // Append new contacts, avoiding duplicates
+        const existingIds = new Set(contacts.value.map(c => c.id))
+        const uniqueNew = newContacts.filter((c: Contact) => !existingIds.has(c.id))
+        contacts.value = [...contacts.value, ...uniqueNew]
+        contactsPage.value = nextPage
+      }
+      contactsTotal.value = data.total ?? contactsTotal.value
+    } catch (error) {
+      console.error('Failed to load more contacts:', error)
+    } finally {
+      isLoadingMoreContacts.value = false
     }
   }
 
@@ -256,7 +297,13 @@ export const useContactsStore = defineStore('contacts', () => {
     replyingTo,
     filteredContacts,
     sortedContacts,
+    // Contacts pagination
+    contactsTotal,
+    hasMoreContacts,
+    isLoadingMoreContacts,
     fetchContacts,
+    loadMoreContacts,
+    // Other
     fetchContact,
     fetchMessages,
     fetchOlderMessages,

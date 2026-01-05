@@ -66,7 +66,8 @@ import {
   X,
   SmilePlus,
   MapPin,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-vue-next'
 import { formatTime, getInitials, truncate } from '@/lib/utils'
 import { useColorMode } from '@/composables/useColorMode'
@@ -917,6 +918,19 @@ async function sendMediaMessage() {
                 </Badge>
               </div>
             </div>
+          </div>
+
+          <!-- Load more indicator -->
+          <div v-if="contactsStore.hasMoreContacts" class="p-3 text-center">
+            <Button
+              v-if="!contactsStore.isLoadingMoreContacts"
+              variant="ghost"
+              size="sm"
+              @click="contactsStore.loadMoreContacts()"
+            >
+              Load more ({{ contactsStore.sortedContacts.length }} of {{ contactsStore.contactsTotal }})
+            </Button>
+            <Loader2 v-else class="h-5 w-5 mx-auto animate-spin text-muted-foreground" />
           </div>
 
           <div v-if="contactsStore.sortedContacts.length === 0" class="p-3 text-center text-muted-foreground">
