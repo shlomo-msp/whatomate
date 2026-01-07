@@ -1349,20 +1349,30 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 	switch step.MessageType {
 	case "api_fetch":
 		// Fetch response from external API (may include message + buttons)
-		apiResp, err := a.fetchApiResponse(step.ApiConfig, session.SessionData)
+		// Pass the step message as template - it will be processed with API response data
+		apiResp, err := a.fetchApiResponse(step.ApiConfig, session.SessionData, step.Message)
 		if err != nil {
 			a.Log.Error("Failed to fetch API response", "error", err, "step", step.StepName)
 			// Use fallback message if configured, otherwise use the step message
 			if fallback, ok := step.ApiConfig["fallback_message"].(string); ok && fallback != "" {
-				message = a.replaceVariables(fallback, session.SessionData)
+				message = processTemplate(fallback, session.SessionData)
 			} else if step.Message != "" {
-				message = a.replaceVariables(step.Message, session.SessionData)
+				message = processTemplate(step.Message, session.SessionData)
 			} else {
 				message = "Sorry, there was an error processing your request."
 			}
 			a.sendAndSaveTextMessage(account, contact, message)
 		} else {
 			message = apiResp.Message
+
+			// Save mapped data to session for future steps
+			if apiResp.MappedData != nil {
+				for k, v := range apiResp.MappedData {
+					session.SessionData[k] = v
+				}
+				a.DB.Model(session).Update("session_data", session.SessionData)
+			}
+
 			// Check if API returned buttons
 			if len(apiResp.Buttons) > 0 {
 				a.sendAndSaveInteractiveButtons(account, contact, message, apiResp.Buttons)
@@ -1374,7 +1384,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 
 	case "buttons":
 		// Send interactive buttons message
-		message = a.replaceVariables(step.Message, session.SessionData)
+		message = processTemplate(step.Message, session.SessionData)
 		if len(step.Buttons) > 0 {
 			// Convert JSONBArray to []map[string]interface{}
 			buttons := make([]map[string]interface{}, 0, len(step.Buttons))
@@ -1392,7 +1402,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 
 	case "transfer":
 		// Transfer to team/agent queue
-		message = a.replaceVariables(step.Message, session.SessionData)
+		message = processTemplate(step.Message, session.SessionData)
 		if message != "" {
 			a.sendAndSaveTextMessage(account, contact, message)
 			a.logSessionMessage(session.ID, "outgoing", message, step.StepName)
@@ -1408,7 +1418,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 				}
 			}
 			if n, ok := step.TransferConfig["notes"].(string); ok {
-				notes = a.replaceVariables(n, session.SessionData)
+				notes = processTemplate(n, session.SessionData)
 			}
 		}
 
@@ -1425,8 +1435,8 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 		return
 
 	default:
-		// Default: use the step message with variable replacement
-		message = a.replaceVariables(step.Message, session.SessionData)
+		// Default: use the step message with template processing
+		message = processTemplate(step.Message, session.SessionData)
 		a.sendAndSaveTextMessage(account, contact, message)
 		a.logSessionMessage(session.ID, "outgoing", message, step.StepName)
 	}
@@ -1434,12 +1444,15 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 
 // ApiResponse represents a response from an external API that may include buttons
 type ApiResponse struct {
-	Message string
-	Buttons []map[string]interface{}
+	Message      string
+	Buttons      []map[string]interface{}
+	MappedData   map[string]interface{} // Data extracted via response_mapping
+	ResponseData map[string]interface{} // Full API response data
 }
 
 // fetchApiResponse fetches a response from an external API, supporting message + buttons
-func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB) (*ApiResponse, error) {
+// and response_mapping for storing API data in session variables
+func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB, messageTemplate string) (*ApiResponse, error) {
 	if apiConfig == nil {
 		return nil, fmt.Errorf("API config is empty")
 	}
@@ -1450,8 +1463,8 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 		return nil, fmt.Errorf("API URL is required")
 	}
 
-	// Replace variables in URL
-	apiURL = a.replaceVariables(apiURL, sessionData)
+	// Replace variables in URL using template engine
+	apiURL = processTemplate(apiURL, sessionData)
 
 	// Get HTTP method (default: GET)
 	method := "GET"
@@ -1462,7 +1475,7 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 	// Prepare request body if configured
 	var bodyReader io.Reader
 	if bodyTemplate, ok := apiConfig["body"].(string); ok && bodyTemplate != "" {
-		bodyWithVars := a.replaceVariables(bodyTemplate, sessionData)
+		bodyWithVars := processTemplate(bodyTemplate, sessionData)
 		bodyReader = strings.NewReader(bodyWithVars)
 	}
 
@@ -1481,7 +1494,7 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 		for key, value := range headers {
 			if strVal, ok := value.(string); ok {
 				// Replace variables in header values
-				req.Header.Set(key, a.replaceVariables(strVal, sessionData))
+				req.Header.Set(key, processTemplate(strVal, sessionData))
 			}
 		}
 	}
@@ -1494,8 +1507,9 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
+	// Read response body (limit to 1MB to prevent memory issues)
+	limitReader := io.LimitReader(resp.Body, 1024*1024)
+	respBody, err := io.ReadAll(limitReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -1511,20 +1525,36 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 		return &ApiResponse{Message: string(respBody)}, nil
 	}
 
-	result := &ApiResponse{}
+	result := &ApiResponse{
+		ResponseData: jsonResp,
+	}
 
-	// Extract message - check for "message" field first, then use response_path
-	if msg, ok := jsonResp["message"].(string); ok {
+	// Process response_mapping if configured
+	// This maps API response fields to session variables for use in templates
+	if responseMapping, ok := apiConfig["response_mapping"].(map[string]interface{}); ok {
+		mappingStrings := make(map[string]string)
+		for varName, path := range responseMapping {
+			if pathStr, ok := path.(string); ok {
+				mappingStrings[varName] = pathStr
+			}
+		}
+		result.MappedData = extractResponseMapping(jsonResp, mappingStrings)
+
+		// Merge mapped data into sessionData for template processing
+		for k, v := range result.MappedData {
+			sessionData[k] = v
+		}
+	}
+
+	// Process the message template with all available data (including mapped data)
+	if messageTemplate != "" {
+		result.Message = processTemplate(messageTemplate, sessionData)
+	} else if msg, ok := jsonResp["message"].(string); ok {
+		// Fallback: check for "message" field in response
 		result.Message = msg
 	} else {
-		// Try response_path for backwards compatibility
-		responsePath, _ := apiConfig["response_path"].(string)
-		if responsePath != "" {
-			result.Message = a.extractJsonPath(jsonResp, responsePath)
-		} else {
-			// No message found, return raw response
-			result.Message = string(respBody)
-		}
+		// No message template, return raw response
+		result.Message = string(respBody)
 	}
 
 	// Extract buttons if present - format: [{"id": "test", "value": "Test"}, ...]
@@ -1555,39 +1585,6 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB)
 	}
 
 	return result, nil
-}
-
-// extractJsonPath extracts a value from a JSON object using dot notation path
-func (a *App) extractJsonPath(data interface{}, path string) string {
-	parts := strings.Split(path, ".")
-	current := data
-
-	for _, part := range parts {
-		switch v := current.(type) {
-		case map[string]interface{}:
-			current = v[part]
-		default:
-			return ""
-		}
-	}
-
-	// Convert final value to string
-	switch v := current.(type) {
-	case string:
-		return v
-	case float64:
-		return fmt.Sprintf("%v", v)
-	case bool:
-		return fmt.Sprintf("%v", v)
-	case nil:
-		return ""
-	default:
-		// For complex types, marshal to JSON string
-		if jsonBytes, err := json.Marshal(v); err == nil {
-			return string(jsonBytes)
-		}
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 // generateAIResponse generates a response using the configured AI provider
@@ -1740,7 +1737,9 @@ func (a *App) fetchAPIContext(apiConfig models.JSONB, session *models.ChatbotSes
 	if responsePath, ok := apiConfig["response_path"].(string); ok && responsePath != "" {
 		var jsonResp map[string]interface{}
 		if err := json.Unmarshal(respBody, &jsonResp); err == nil {
-			return a.extractJsonPath(jsonResp, responsePath), nil
+			if value := getNestedValue(jsonResp, responsePath); value != nil {
+				return formatValue(value), nil
+			}
 		}
 	}
 

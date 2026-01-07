@@ -58,8 +58,8 @@ interface ApiConfig {
   method: string
   headers: Record<string, string>
   body: string
-  response_path: string
   fallback_message: string
+  response_mapping: Record<string, string>  // Maps session variables to API response paths
 }
 
 interface ButtonConfig {
@@ -156,8 +156,8 @@ const defaultApiConfig: ApiConfig = {
   method: 'GET',
   headers: {},
   body: '',
-  response_path: '',
-  fallback_message: ''
+  fallback_message: '',
+  response_mapping: {}
 }
 
 const defaultTransferConfig: TransferConfig = {
@@ -274,7 +274,8 @@ async function openEditDialog(flow: ChatbotFlow) {
         api_config: {
           ...defaultApiConfig,
           ...(s.api_config || s.ApiConfig || {}),
-          headers: (s.api_config || s.ApiConfig || {}).headers || {}
+          headers: (s.api_config || s.ApiConfig || {}).headers || {},
+          response_mapping: (s.api_config || s.ApiConfig || {}).response_mapping || {}
         },
         buttons: s.buttons || s.Buttons || [],
         transfer_config: {
@@ -348,6 +349,28 @@ function updateStepHeaderKey(stepIndex: number, oldKey: string, newKey: string) 
 
 function removeStepHeader(stepIndex: number, key: string) {
   delete formData.value.steps[stepIndex].api_config.headers[key]
+}
+
+// Step API response mapping helpers
+function addStepResponseMapping(stepIndex: number) {
+  const step = formData.value.steps[stepIndex]
+  if (!step.api_config.response_mapping) {
+    step.api_config.response_mapping = {}
+  }
+  const mappingNum = Object.keys(step.api_config.response_mapping).length + 1
+  step.api_config.response_mapping[`var_${mappingNum}`] = ''
+}
+
+function updateStepResponseMappingKey(stepIndex: number, oldKey: string, newKey: string) {
+  if (oldKey === newKey) return
+  const step = formData.value.steps[stepIndex]
+  const value = step.api_config.response_mapping[oldKey]
+  delete step.api_config.response_mapping[oldKey]
+  step.api_config.response_mapping[newKey] = value
+}
+
+function removeStepResponseMapping(stepIndex: number, key: string) {
+  delete formData.value.steps[stepIndex].api_config.response_mapping[key]
 }
 
 function removeStep(index: number) {
@@ -767,14 +790,17 @@ function removeButton(step: FlowStep, index: number) {
                           </Select>
                         </div>
 
-                        <!-- Static Message (for text type) -->
-                        <div v-if="step.message_type !== 'api_fetch'" class="space-y-2">
+                        <!-- Static Message (for text, buttons, whatsapp_flow types - not api_fetch which has its own template section) -->
+                        <div v-if="step.message_type !== 'api_fetch' && step.message_type !== 'transfer'" class="space-y-2">
                           <Label>Message to Send *</Label>
                           <Textarea
                             v-model="step.message"
                             placeholder="What is your name?"
                             :rows="2"
                           />
+                          <p v-if="step.message_type === 'text' || step.message_type === 'buttons'" class="text-xs text-muted-foreground">
+                            Use <code v-pre class="bg-muted px-1 rounded">{{variable}}</code> for dynamic values from session data
+                          </p>
                         </div>
 
                         <!-- Buttons Configuration (for buttons type) -->
@@ -845,7 +871,7 @@ function removeButton(step: FlowStep, index: number) {
                                 v-model="step.api_config.url"
                                 placeholder="https://api.example.com/data/{{customer_id}}"
                               />
-                              <p class="text-xs text-muted-foreground">Use {{variable}} to include session data</p>
+                              <p class="text-xs text-muted-foreground">Use <code v-pre class="text-xs bg-muted px-1 rounded">{{variable}}</code> to include session data</p>
                             </div>
                           </div>
 
@@ -881,7 +907,7 @@ function removeButton(step: FlowStep, index: number) {
                               </div>
                             </div>
                             <p class="text-xs text-muted-foreground">
-                              Add custom headers like Authorization, API keys. Use {{variable}} for dynamic values.
+                              Add custom headers like Authorization, API keys.
                             </p>
                           </div>
 
@@ -894,23 +920,76 @@ function removeButton(step: FlowStep, index: number) {
                             />
                           </div>
 
-                          <div class="grid grid-cols-2 gap-4">
-                            <div class="space-y-2">
-                              <Label>Response Path</Label>
-                              <Input
-                                v-model="step.api_config.response_path"
-                                placeholder="data.message"
-                              />
-                              <p class="text-xs text-muted-foreground">Dot notation path to extract message (e.g., data.message)</p>
+                          <!-- Response Mapping -->
+                          <div class="space-y-2 border-t pt-4">
+                            <div class="flex items-center justify-between">
+                              <Label>Response Mapping (extract API data)</Label>
+                              <Button variant="outline" size="sm" @click="addStepResponseMapping(index)">
+                                <Plus class="h-3 w-3 mr-1" />
+                                Add Mapping
+                              </Button>
                             </div>
-                            <div class="space-y-2">
-                              <Label>Fallback Message</Label>
-                              <Input
-                                v-model="step.api_config.fallback_message"
-                                placeholder="Sorry, we couldn't fetch your data."
-                              />
-                              <p class="text-xs text-muted-foreground">Sent if API call fails</p>
+                            <div v-if="step.api_config.response_mapping && Object.keys(step.api_config.response_mapping).length > 0" class="space-y-2">
+                              <div
+                                v-for="(value, key) in step.api_config.response_mapping"
+                                :key="key"
+                                class="flex items-center gap-2"
+                              >
+                                <Input
+                                  :model-value="key"
+                                  placeholder="Variable name"
+                                  class="flex-1"
+                                  @update:model-value="updateStepResponseMappingKey(index, key as string, $event)"
+                                />
+                                <span class="text-muted-foreground">=</span>
+                                <Input
+                                  v-model="step.api_config.response_mapping[key as string]"
+                                  placeholder="API path (e.g., data.user.name)"
+                                  class="flex-1"
+                                />
+                                <Button variant="ghost" size="icon" @click="removeStepResponseMapping(index, key as string)">
+                                  <Trash2 class="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
                             </div>
+                            <p class="text-xs text-muted-foreground">
+                              Map API response fields to session variables for use in the message template below.
+                              <br />
+                              Example: <code v-pre class="text-xs bg-muted px-1 rounded">name</code> = <code class="text-xs bg-muted px-1 rounded">data.client.name</code>,
+                              <code v-pre class="text-xs bg-muted px-1 rounded">positions</code> = <code class="text-xs bg-muted px-1 rounded">data.portfolio.items</code>
+                            </p>
+                          </div>
+
+                          <!-- Message Template -->
+                          <div class="space-y-2 border-t pt-4">
+                            <Label>Message Template *</Label>
+                            <Textarea
+                              v-model="step.message"
+                              placeholder="Hi {{name}}, here are your positions:
+
+{{for pos in positions}}
+- {{pos.symbol}}: {{pos.quantity}} @ ₹{{pos.price}}
+{{if pos.is_loss}}  ⚠️ Loss: ₹{{pos.loss}}
+{{else}}  ✅ Profit: ₹{{pos.profit}}
+{{endif}}{{endfor}}"
+                              :rows="6"
+                            />
+                            <div class="text-xs text-muted-foreground space-y-1">
+                              <p><strong>Template Syntax:</strong></p>
+                              <p>• Variables: <code v-pre class="bg-muted px-1 rounded">{{name}}</code>, <code v-pre class="bg-muted px-1 rounded">{{user.profile.email}}</code></p>
+                              <p>• Conditionals: <code v-pre class="bg-muted px-1 rounded">{{if is_premium}}...{{else}}...{{endif}}</code></p>
+                              <p>• Comparisons: <code v-pre class="bg-muted px-1 rounded">{{if amount > 100}}</code>, <code v-pre class="bg-muted px-1 rounded">{{if status == 'active'}}</code></p>
+                              <p>• Loops: <code v-pre class="bg-muted px-1 rounded">{{for item in items}}...{{endfor}}</code></p>
+                            </div>
+                          </div>
+
+                          <div class="space-y-2 border-t pt-4">
+                            <Label>Fallback Message</Label>
+                            <Input
+                              v-model="step.api_config.fallback_message"
+                              placeholder="Sorry, we couldn't fetch your data."
+                            />
+                            <p class="text-xs text-muted-foreground">Sent if API call fails</p>
                           </div>
                         </div>
 
