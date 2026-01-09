@@ -52,6 +52,7 @@ import {
   Reply,
 } from 'lucide-vue-next'
 import draggable from 'vuedraggable'
+import FlowChart from '@/components/chatbot/flow-builder/FlowChart.vue'
 import FlowPreviewPanel from '@/components/chatbot/flow-preview/FlowPreviewPanel.vue'
 
 interface ApiConfig {
@@ -90,6 +91,7 @@ interface FlowStep {
   validation_error: string
   store_as: string
   next_step: string
+  conditional_next?: Record<string, string>  // Button ID -> target step name
   retry_on_invalid: boolean
   max_retries: number
   skip_condition: string
@@ -122,6 +124,7 @@ const teams = ref<Team[]>([])
 
 const selectedStepIndex = ref<number | null>(null)
 const showFlowSettings = ref(false)
+const previewMode = ref<'edit' | 'preview'>('edit')
 const deleteStepDialogOpen = ref(false)
 const stepToDeleteIndex = ref<number | null>(null)
 const hasUnsavedChanges = ref(false)
@@ -224,6 +227,7 @@ const defaultStep: FlowStep = {
   validation_error: 'Invalid input. Please try again.',
   store_as: '',
   next_step: '',
+  conditional_next: {},
   retry_on_invalid: true,
   max_retries: 3,
   skip_condition: ''
@@ -246,6 +250,11 @@ const selectedStep = computed(() => {
     return null
   }
   return formData.value.steps[selectedStepIndex.value]
+})
+
+// All steps with valid names for branching dropdowns
+const stepsWithNames = computed(() => {
+  return formData.value.steps.filter(s => s.step_name && s.step_name.trim() !== '')
 })
 
 const messageTypes = [
@@ -282,11 +291,6 @@ function getStepLabel(messageType: string) {
 watch(formData, () => {
   hasUnsavedChanges.value = true
 }, { deep: true })
-
-// Close list picker when step changes
-watch(selectedStepIndex, () => {
-  listPickerOpen.value = false
-})
 
 onMounted(async () => {
   await Promise.all([fetchWhatsAppFlows(), fetchTeams()])
@@ -378,6 +382,7 @@ async function loadFlow(id: string) {
         validation_error: s.validation_error || s.ValidationError || 'Invalid input. Please try again.',
         store_as: s.store_as || s.StoreAs || '',
         next_step: s.next_step || s.NextStep || '',
+        conditional_next: s.conditional_next || s.ConditionalNext || {},
         retry_on_invalid: s.retry_on_invalid ?? s.RetryOnInvalid ?? true,
         max_retries: s.max_retries ?? s.MaxRetries ?? 3,
         skip_condition: s.skip_condition || s.SkipCondition || ''
@@ -406,11 +411,18 @@ function addStep() {
 function selectStep(index: number) {
   selectedStepIndex.value = index
   showFlowSettings.value = false
+  previewMode.value = 'edit'
 }
 
 function selectFlowSettings() {
   showFlowSettings.value = true
   selectedStepIndex.value = null
+  previewMode.value = 'edit'
+}
+
+function openPreview() {
+  showFlowSettings.value = false
+  previewMode.value = 'preview'
 }
 
 function confirmDeleteStep(index: number) {
@@ -455,6 +467,20 @@ function setMessageType(type: string) {
   }
 }
 
+function setInputType(type: string) {
+  if (!selectedStep.value) return
+
+  selectedStep.value.input_type = type
+
+  // Auto-fill selection options from button titles if:
+  // - Input type is 'select'
+  // - Message type is 'buttons'
+  // - Buttons have titles
+  if (type === 'select' && selectedStep.value.message_type === 'buttons') {
+    syncButtonTitlesToOptions()
+  }
+}
+
 // Button helpers
 function addButton(type: 'reply' | 'url' = 'reply') {
   if (!selectedStep.value) return
@@ -476,6 +502,54 @@ function addButton(type: 'reply' | 'url' = 'reply') {
 function removeButton(index: number) {
   if (!selectedStep.value) return
   selectedStep.value.buttons.splice(index, 1)
+  // Sync options if input type is select
+  syncButtonTitlesToOptions()
+}
+
+function updateButtonTitle(index: number, title: string) {
+  if (!selectedStep.value) return
+  selectedStep.value.buttons[index].title = title
+  // Sync options if input type is select
+  syncButtonTitlesToOptions()
+}
+
+function syncButtonTitlesToOptions() {
+  if (!selectedStep.value) return
+  if (selectedStep.value.input_type !== 'select') return
+  if (selectedStep.value.message_type !== 'buttons') return
+
+  const buttonTitles = selectedStep.value.buttons
+    ?.filter(btn => btn.title?.trim())
+    .map(btn => btn.title.trim()) || []
+
+  selectedStep.value.input_config = {
+    ...selectedStep.value.input_config,
+    options: buttonTitles
+  }
+}
+
+// Button conditional branching helpers
+function getButtonId(btn: ButtonConfig, index: number): string {
+  // Match backend logic: use btn.id if set, otherwise generate btn_1, btn_2, etc.
+  return btn.id || `btn_${index + 1}`
+}
+
+function getButtonNextStep(buttonId: string): string {
+  const target = selectedStep.value?.conditional_next?.[buttonId]
+  return target || '__default__'
+}
+
+function setButtonNextStep(buttonId: string, targetStep: string) {
+  if (!selectedStep.value) return
+  if (!selectedStep.value.conditional_next) {
+    selectedStep.value.conditional_next = {}
+  }
+  // __default__ means no conditional routing (sequential flow)
+  if (targetStep && targetStep !== '__default__') {
+    selectedStep.value.conditional_next[buttonId] = targetStep
+  } else {
+    delete selectedStep.value.conditional_next[buttonId]
+  }
 }
 
 // API header helpers
@@ -541,6 +615,37 @@ async function saveFlow() {
   if (formData.value.steps.length === 0) {
     toast.error('Please add at least one step')
     return
+  }
+
+  // Validate button titles and URLs
+  for (let i = 0; i < formData.value.steps.length; i++) {
+    const step = formData.value.steps[i]
+    if (step.message_type === 'buttons' && step.buttons?.length > 0) {
+      for (const btn of step.buttons) {
+        // Check title
+        if (!btn.title?.trim()) {
+          toast.error(`Step "${step.step_name || `Step ${i + 1}`}" has a button without a title. Button titles are required for WhatsApp.`)
+          selectStep(i)
+          return
+        }
+        // Check URL for URL buttons
+        if (btn.type === 'url') {
+          if (!btn.url?.trim()) {
+            toast.error(`Step "${step.step_name || `Step ${i + 1}`}" has a URL button "${btn.title}" without a URL.`)
+            selectStep(i)
+            return
+          }
+          // Validate URL format
+          try {
+            new URL(btn.url)
+          } catch {
+            toast.error(`Step "${step.step_name || `Step ${i + 1}`}" has an invalid URL for button "${btn.title}".`)
+            selectStep(i)
+            return
+          }
+        }
+      }
+    }
   }
 
   isSaving.value = true
@@ -735,176 +840,24 @@ function confirmCancel() {
         <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-border group-hover:bg-primary/40 transition-colors"></div>
       </div>
 
-      <!-- Step Editor (Center) -->
+      <!-- Center Panel -->
       <div class="flex-1 flex flex-col overflow-hidden">
-        <!-- Flow Settings Content -->
+        <!-- Flow Chart (when viewing flow settings) -->
         <template v-if="showFlowSettings">
-          <div class="bg-background border-b p-3 flex-shrink-0">
-            <div class="flex items-center gap-2">
-              <Settings class="h-5 w-5 text-primary" />
-              <span class="text-sm font-medium">Flow Settings</span>
-            </div>
-          </div>
-
-          <ScrollArea class="flex-1 p-4">
-            <div class="max-w-2xl mx-auto space-y-6">
-              <!-- Trigger Keywords Card -->
-              <Card>
-                <CardHeader class="pb-3">
-                  <CardTitle class="text-base">Trigger Keywords</CardTitle>
-                  <p class="text-sm text-muted-foreground">Keywords that will start this flow when a user sends them</p>
-                </CardHeader>
-                <CardContent>
-                  <Input
-                    v-model="formData.trigger_keywords"
-                    placeholder="help, support, order, track"
-                  />
-                  <p class="text-xs text-muted-foreground mt-2">
-                    Enter keywords separated by commas. The flow will be triggered when a user message matches any of these keywords.
-                  </p>
-                </CardContent>
-              </Card>
-
-              <!-- Initial Message Card -->
-              <Card>
-                <CardHeader class="pb-3">
-                  <CardTitle class="text-base">Initial Message</CardTitle>
-                  <p class="text-sm text-muted-foreground">Sent when the flow starts</p>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    v-model="formData.initial_message"
-                    placeholder="Hi! Let me help you with that."
-                    :rows="3"
-                    class="text-sm"
-                  />
-                </CardContent>
-              </Card>
-
-              <!-- Completion Message Card -->
-              <Card>
-                <CardHeader class="pb-3">
-                  <CardTitle class="text-base">Completion Message</CardTitle>
-                  <p class="text-sm text-muted-foreground">Sent when the flow completes successfully</p>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    v-model="formData.completion_message"
-                    placeholder="Thank you! We have all the information we need."
-                    :rows="3"
-                    class="text-sm"
-                  />
-                </CardContent>
-              </Card>
-
-              <!-- On Complete Action Card -->
-              <Card>
-                <CardHeader class="pb-3">
-                  <CardTitle class="text-base">On Flow Completion</CardTitle>
-                  <p class="text-sm text-muted-foreground">Action to perform when flow completes</p>
-                </CardHeader>
-                <CardContent class="space-y-4">
-                  <Select v-model="formData.on_complete_action">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select action" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No action</SelectItem>
-                      <SelectItem value="webhook">Send data to API/Webhook</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <!-- Webhook Configuration -->
-                  <template v-if="formData.on_complete_action === 'webhook'">
-                    <div class="space-y-4 p-4 border rounded-lg bg-muted/10">
-                      <div class="flex items-center gap-2">
-                        <Badge variant="outline">Webhook Configuration</Badge>
-                      </div>
-
-                      <div class="grid grid-cols-4 gap-4">
-                        <div class="space-y-2">
-                          <Label class="text-xs">Method</Label>
-                          <Select v-model="formData.completion_config.method">
-                            <SelectTrigger>
-                              <SelectValue placeholder="Method" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem v-for="method in httpMethods" :key="method" :value="method">
-                                {{ method }}
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div class="col-span-3 space-y-2">
-                          <Label class="text-xs">Webhook URL *</Label>
-                          <Input
-                            v-model="formData.completion_config.url"
-                            placeholder="https://api.example.com/webhook"
-                          />
-                        </div>
-                      </div>
-
-                      <!-- Headers -->
-                      <Collapsible v-model:open="webhookHeadersOpen">
-                        <div class="flex items-center justify-between">
-                          <CollapsibleTrigger class="flex items-center gap-2 text-sm">
-                            <component :is="webhookHeadersOpen ? ChevronDown : ChevronRight" class="h-4 w-4" />
-                            Headers (optional)
-                          </CollapsibleTrigger>
-                          <Button variant="outline" size="sm" @click="addCompletionHeader">
-                            <Plus class="h-3 w-3 mr-1" />
-                            Add Header
-                          </Button>
-                        </div>
-                        <CollapsibleContent class="pt-3">
-                          <div v-if="formData.completion_config.headers && Object.keys(formData.completion_config.headers).length > 0" class="space-y-2">
-                            <div
-                              v-for="(value, key) in formData.completion_config.headers"
-                              :key="key"
-                              class="flex items-center gap-2"
-                            >
-                              <Input
-                                :model-value="key"
-                                placeholder="Header name"
-                                class="flex-1"
-                                @update:model-value="updateCompletionHeaderKey(key as string, $event)"
-                              />
-                              <Input
-                                v-model="formData.completion_config.headers[key as string]"
-                                placeholder="Header value"
-                                class="flex-1"
-                              />
-                              <Button variant="ghost" size="icon" @click="removeCompletionHeader(key as string)">
-                                <Trash2 class="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </div>
-                          <p v-else class="text-xs text-muted-foreground">
-                            No headers configured. Click "Add Header" to add custom headers.
-                          </p>
-                        </CollapsibleContent>
-                      </Collapsible>
-
-                      <div class="space-y-2">
-                        <Label class="text-xs">Custom Request Body (optional)</Label>
-                        <Textarea
-                          v-model="formData.completion_config.body"
-                          placeholder='Leave empty for default payload, or enter custom JSON like: {"name": "{{name}}", "phone": "{{phone_number}}"}'
-                          :rows="3"
-                        />
-                        <p class="text-xs text-muted-foreground">
-                          Default payload includes: flow_id, flow_name, session_id, phone_number, contact_id, contact_name, session_data, completed_at
-                        </p>
-                      </div>
-                    </div>
-                  </template>
-                </CardContent>
-              </Card>
-            </div>
-          </ScrollArea>
+          <FlowChart
+            :steps="formData.steps"
+            :selected-step-index="selectedStepIndex"
+            :flow-name="formData.name"
+            :initial-message="formData.initial_message"
+            :completion-message="formData.completion_message"
+            @select-step="selectStep"
+            @add-step="addStep"
+            @select-flow-settings="selectFlowSettings"
+            @open-preview="openPreview"
+          />
         </template>
 
-        <!-- Step Editor Content with Preview Panel -->
+        <!-- Step Preview (when editing a step) -->
         <template v-else>
           <FlowPreviewPanel
             :steps="formData.steps"
@@ -913,6 +866,7 @@ function confirmCancel() {
             :selected-step-index="selectedStepIndex"
             :list-picker-open="listPickerOpen"
             :teams="teams"
+            :initial-mode="previewMode"
             @update:list-picker-open="listPickerOpen = $event"
             @select-message-type="setMessageType"
           />
@@ -934,9 +888,146 @@ function confirmCancel() {
         :style="{ width: propertiesPanelWidth + 'px' }"
       >
         <CardHeader class="py-3 px-4 border-b">
-          <CardTitle class="text-sm font-medium">Properties</CardTitle>
+          <CardTitle class="text-sm font-medium">
+            {{ showFlowSettings ? 'Flow Settings' : 'Step Properties' }}
+          </CardTitle>
         </CardHeader>
-        <ScrollArea class="flex-1" v-if="selectedStep">
+
+        <!-- Flow Settings -->
+        <ScrollArea class="flex-1" v-if="showFlowSettings">
+          <div class="p-4 space-y-4">
+            <!-- Trigger Keywords -->
+            <div class="space-y-1.5">
+              <Label class="text-xs">Trigger Keywords</Label>
+              <Input
+                v-model="formData.trigger_keywords"
+                placeholder="help, support, order"
+                class="h-8 text-xs"
+              />
+              <p class="text-[10px] text-muted-foreground">Comma-separated keywords to start this flow</p>
+            </div>
+
+            <Separator />
+
+            <!-- Initial Message -->
+            <div class="space-y-1.5">
+              <Label class="text-xs">Initial Message</Label>
+              <Textarea
+                v-model="formData.initial_message"
+                placeholder="Hi! Let me help you with that."
+                :rows="3"
+                class="text-xs"
+              />
+              <p class="text-[10px] text-muted-foreground">Sent when flow starts</p>
+            </div>
+
+            <Separator />
+
+            <!-- Completion Message -->
+            <div class="space-y-1.5">
+              <Label class="text-xs">Completion Message</Label>
+              <Textarea
+                v-model="formData.completion_message"
+                placeholder="Thank you! We have all the information we need."
+                :rows="3"
+                class="text-xs"
+              />
+              <p class="text-[10px] text-muted-foreground">Sent when flow completes</p>
+            </div>
+
+            <Separator />
+
+            <!-- On Complete Action -->
+            <Collapsible v-model:open="webhookHeadersOpen">
+              <CollapsibleTrigger class="flex items-center justify-between w-full py-1 text-sm font-medium">
+                On Completion
+                <component :is="webhookHeadersOpen ? ChevronDown : ChevronRight" class="h-4 w-4" />
+              </CollapsibleTrigger>
+              <CollapsibleContent class="pt-3 space-y-3">
+                <div class="space-y-1.5">
+                  <Label class="text-xs">Action</Label>
+                  <Select v-model="formData.on_complete_action">
+                    <SelectTrigger class="h-8 text-xs">
+                      <SelectValue placeholder="Select action" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No action</SelectItem>
+                      <SelectItem value="webhook">Send to API/Webhook</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <!-- Webhook Configuration -->
+                <template v-if="formData.on_complete_action === 'webhook'">
+                  <div class="space-y-3 p-3 border rounded-lg bg-muted/30">
+                    <div class="flex gap-2">
+                      <div class="w-16">
+                        <Label class="text-[10px]">Method</Label>
+                        <Select v-model="formData.completion_config.method">
+                          <SelectTrigger class="h-7 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem v-for="method in httpMethods" :key="method" :value="method">
+                              {{ method }}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div class="flex-1">
+                        <Label class="text-[10px]">URL</Label>
+                        <Input
+                          v-model="formData.completion_config.url"
+                          placeholder="https://..."
+                          class="h-7 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Headers -->
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between">
+                        <Label class="text-[10px]">Headers</Label>
+                        <Button variant="ghost" size="sm" class="h-5 text-[10px] px-1" @click="addCompletionHeader">
+                          <Plus class="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div v-for="(value, key) in formData.completion_config.headers" :key="key" class="flex gap-1">
+                        <Input
+                          :model-value="key"
+                          placeholder="Key"
+                          class="h-6 text-[10px] flex-1"
+                          @update:model-value="updateCompletionHeaderKey(key as string, $event)"
+                        />
+                        <Input
+                          v-model="formData.completion_config.headers[key as string]"
+                          placeholder="Value"
+                          class="h-6 text-[10px] flex-1"
+                        />
+                        <Button variant="ghost" size="icon" class="h-6 w-6" @click="removeCompletionHeader(key as string)">
+                          <Trash2 class="h-3 w-3 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <Label class="text-[10px]">Body (optional)</Label>
+                      <Textarea
+                        v-model="formData.completion_config.body"
+                        placeholder='{"name": "{{name}}"}'
+                        :rows="2"
+                        class="text-[10px] font-mono"
+                      />
+                    </div>
+                  </div>
+                </template>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        </ScrollArea>
+
+        <!-- Step Properties -->
+        <ScrollArea class="flex-1" v-else-if="selectedStep">
           <div class="p-4 space-y-4">
             <!-- Basic Properties -->
             <div class="space-y-3">
@@ -999,7 +1090,7 @@ function confirmCancel() {
                             <component :is="btn.type === 'url' ? ExternalLink : Reply" class="h-2.5 w-2.5 mr-1" />
                             {{ btn.type === 'url' ? 'URL' : 'Reply' }}
                           </Badge>
-                          <Input v-model="btn.title" placeholder="Button Title" class="h-7 flex-1 text-xs" />
+                          <Input :model-value="btn.title" @update:model-value="updateButtonTitle(idx, $event)" placeholder="Button Title" class="h-7 flex-1 text-xs" />
                           <Button variant="ghost" size="icon" class="h-7 w-7" @click="removeButton(idx)">
                             <Trash2 class="h-3 w-3 text-destructive" />
                           </Button>
@@ -1007,13 +1098,34 @@ function confirmCancel() {
                         <div v-if="btn.type === 'url'" class="flex gap-2">
                           <Input v-model="btn.url" placeholder="https://example.com" class="h-7 text-xs flex-1" />
                         </div>
-                        <div v-else class="flex gap-2">
-                          <Input v-model="btn.id" placeholder="Button ID (for routing)" class="h-7 text-xs flex-1" />
+                        <div v-else class="space-y-2">
+                          <Input v-model="btn.id" :placeholder="`Button ID (default: btn_${idx + 1})`" class="h-7 text-xs" />
+                          <div class="flex items-center gap-2">
+                            <Label class="text-xs text-muted-foreground whitespace-nowrap">Go to:</Label>
+                            <Select
+                              :model-value="getButtonNextStep(getButtonId(btn, idx))"
+                              @update:model-value="setButtonNextStep(getButtonId(btn, idx), $event)"
+                            >
+                              <SelectTrigger class="h-7 text-xs flex-1">
+                                <SelectValue placeholder="Next step (sequential)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__default__">Next step (sequential)</SelectItem>
+                                <SelectItem
+                                  v-for="step in stepsWithNames"
+                                  :key="`goto-${step.step_name}`"
+                                  :value="step.step_name"
+                                >
+                                  {{ step.step_name }}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
                       </div>
                     </div>
                     <p class="text-[10px] text-muted-foreground">
-                      Reply buttons send user's choice back. URL buttons open a link.
+                      Reply buttons send user's choice back. URL buttons open a link. Use "Go to" to branch to different steps.
                     </p>
                   </div>
                 </template>
@@ -1189,7 +1301,10 @@ function confirmCancel() {
               <CollapsibleContent class="pt-3 space-y-3">
                 <div class="space-y-1.5">
                   <Label class="text-xs">Expected Input Type</Label>
-                  <Select v-model="selectedStep.input_type">
+                  <Select
+                    :model-value="selectedStep.input_type"
+                    @update:model-value="setInputType($event)"
+                  >
                     <SelectTrigger class="h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
@@ -1266,12 +1381,6 @@ function confirmCancel() {
             </Collapsible>
           </div>
         </ScrollArea>
-        <div v-else-if="showFlowSettings" class="flex-1 flex items-center justify-center text-muted-foreground text-sm p-4 text-center">
-          <div>
-            <Settings class="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p>Flow settings are shown in the editor panel</p>
-          </div>
-        </div>
         <div v-else class="flex-1 flex items-center justify-center text-muted-foreground text-sm p-4">
           Select a step to edit its properties
         </div>

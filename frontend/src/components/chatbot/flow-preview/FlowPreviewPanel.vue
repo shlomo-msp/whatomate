@@ -23,6 +23,7 @@ const props = defineProps<{
   selectedStepIndex: number | null
   listPickerOpen: boolean
   teams: Array<{ id: string; name: string }>
+  initialMode?: 'edit' | 'preview'
 }>()
 
 const emit = defineEmits<{
@@ -30,7 +31,14 @@ const emit = defineEmits<{
   selectMessageType: [type: string]
 }>()
 
-const mode = ref<'edit' | 'preview'>('edit')
+const mode = ref<'edit' | 'preview'>(props.initialMode || 'edit')
+
+// Watch for initialMode changes
+watch(() => props.initialMode, (newMode) => {
+  if (newMode) {
+    mode.value = newMode
+  }
+})
 
 const messageTypeIcons: Record<string, any> = {
   text: MessageSquare,
