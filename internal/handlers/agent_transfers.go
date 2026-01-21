@@ -654,6 +654,9 @@ func (a *App) ResumeFromTransfer(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to resume transfer", nil, "")
 	}
 
+	// Clear chatbot tracking so client inactivity SLA doesn't trigger after transfer is closed
+	a.ClearContactChatbotTracking(transfer.ContactID)
+
 	// Get chatbot settings to check AssignToSameAgent (use cache)
 	settings, _ := a.getChatbotSettingsCached(orgID, transfer.WhatsAppAccount)
 

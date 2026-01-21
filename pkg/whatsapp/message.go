@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"time"
 )
 
@@ -217,7 +219,7 @@ type TemplateParam struct {
 }
 
 // SendTemplateMessage sends a template message
-func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phoneNumber, templateName, languageCode string, bodyParams []string) (string, error) {
+func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phoneNumber, templateName, languageCode string, bodyParams map[string]string) (string, error) {
 	template := map[string]interface{}{
 		"name": templateName,
 		"language": map[string]interface{}{
@@ -227,12 +229,33 @@ func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phon
 
 	// Add body parameters if provided
 	if len(bodyParams) > 0 {
+		// Check if using named parameters (non-numeric keys like "name", "order_id")
+		isNamedParams := false
+		for key := range bodyParams {
+			if _, err := strconv.Atoi(key); err != nil {
+				isNamedParams = true
+				break
+			}
+		}
+
+		// Get sorted keys for deterministic ordering
+		keys := make([]string, 0, len(bodyParams))
+		for k := range bodyParams {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
 		params := make([]map[string]interface{}, 0, len(bodyParams))
-		for _, p := range bodyParams {
-			params = append(params, map[string]interface{}{
+		for _, key := range keys {
+			param := map[string]interface{}{
 				"type": "text",
-				"text": p,
-			})
+				"text": bodyParams[key],
+			}
+			// For named parameters, include the parameter_name field
+			if isNamedParams {
+				param["parameter_name"] = key
+			}
+			params = append(params, param)
 		}
 		template["components"] = []map[string]interface{}{
 			{

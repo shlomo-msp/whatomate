@@ -475,6 +475,24 @@ type SendMessageRequest struct {
 		Body string `json:"body"`
 	} `json:"content"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+
+	// Interactive message fields (for type="interactive")
+	Interactive *InteractiveContent `json:"interactive,omitempty"`
+}
+
+// InteractiveContent holds interactive message data
+type InteractiveContent struct {
+	Type       string           `json:"type"`                  // "button", "list", "cta_url"
+	Body       string           `json:"body"`                  // Body text
+	Buttons    []ButtonContent  `json:"buttons,omitempty"`     // For button type
+	ButtonText string           `json:"button_text,omitempty"` // For cta_url type
+	URL        string           `json:"url,omitempty"`         // For cta_url type
+}
+
+// ButtonContent represents a button in interactive messages
+type ButtonContent struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // SendMessage sends a message to a contact
@@ -532,6 +550,25 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 		ReplyToMessage: replyToMessage,
 	}
 
+	// Handle interactive messages
+	if req.Type == models.MessageTypeInteractive && req.Interactive != nil {
+		msgReq.InteractiveType = req.Interactive.Type
+		msgReq.BodyText = req.Interactive.Body
+		msgReq.ButtonText = req.Interactive.ButtonText
+		msgReq.URL = req.Interactive.URL
+
+		// Convert buttons
+		if len(req.Interactive.Buttons) > 0 {
+			msgReq.Buttons = make([]whatsapp.Button, len(req.Interactive.Buttons))
+			for i, btn := range req.Interactive.Buttons {
+				msgReq.Buttons[i] = whatsapp.Button{
+					ID:    btn.ID,
+					Title: btn.Title,
+				}
+			}
+		}
+	}
+
 	opts := DefaultSendOptions()
 	opts.SentByUserID = &userID
 
@@ -543,15 +580,16 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 
 	// Build response
 	response := MessageResponse{
-		ID:          message.ID,
-		ContactID:   message.ContactID,
-		Direction:   message.Direction,
-		MessageType: message.MessageType,
-		Content:     map[string]string{"body": message.Content},
-		Status:      message.Status,
-		IsReply:     message.IsReply,
-		CreatedAt:   message.CreatedAt,
-		UpdatedAt:   message.UpdatedAt,
+		ID:              message.ID,
+		ContactID:       message.ContactID,
+		Direction:       message.Direction,
+		MessageType:     message.MessageType,
+		Content:         map[string]string{"body": message.Content},
+		InteractiveData: message.InteractiveData,
+		Status:          message.Status,
+		IsReply:         message.IsReply,
+		CreatedAt:       message.CreatedAt,
+		UpdatedAt:       message.UpdatedAt,
 	}
 
 	// Add reply context to response
