@@ -343,12 +343,7 @@ func (a *App) CallbackSSO(r *fastglue.Request) error {
 	}
 
 	// Redirect to frontend with tokens in URL fragment
-	basePath := a.Config.Server.BasePath
-	if basePath == "" {
-		basePath = ""
-	} else if basePath[0] != '/' {
-		basePath = "/" + basePath
-	}
+	basePath := sanitizeRedirectPath(a.Config.Server.BasePath)
 	redirectURL := fmt.Sprintf("%s/auth/sso/callback#access_token=%s&refresh_token=%s&expires_in=%d",
 		basePath, accessToken, refreshToken, a.Config.JWT.AccessExpiryMins*60)
 
@@ -516,10 +511,7 @@ func (a *App) buildOAuthConfig(provider string, ssoConfig *models.SSOProvider, r
 		scheme = "http"
 	}
 	host := string(r.RequestCtx.Host())
-	basePath := a.Config.Server.BasePath
-	if basePath != "" && basePath[0] != '/' {
-		basePath = "/" + basePath
-	}
+	basePath := sanitizeRedirectPath(a.Config.Server.BasePath)
 	callbackURL := fmt.Sprintf("%s://%s%s/api/auth/sso/%s/callback", scheme, host, basePath, provider)
 
 	return &oauth2.Config{
@@ -547,8 +539,7 @@ func (a *App) fetchUserInfo(provider string, ssoConfig *models.SSOProvider, toke
 		userInfoURL = oauthProviders[provider].UserInfoURL
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", userInfoURL, nil)
+	req, err := http.NewRequest(http.MethodGet, userInfoURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +549,7 @@ func (a *App) fetchUserInfo(provider string, ssoConfig *models.SSOProvider, toke
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
 
-	resp, err := client.Do(req)
+	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +622,6 @@ func (a *App) fetchUserInfo(provider string, ssoConfig *models.SSOProvider, toke
 }
 
 func (a *App) fetchGitHubEmail(token *oauth2.Token) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
 	if err != nil {
 		return "", err
@@ -640,7 +630,7 @@ func (a *App) fetchGitHubEmail(token *oauth2.Token) (string, error) {
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := client.Do(req)
+	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -674,13 +664,28 @@ func (a *App) fetchGitHubEmail(token *oauth2.Token) (string, error) {
 }
 
 func (a *App) redirectWithError(r *fastglue.Request, message string) {
-	basePath := a.Config.Server.BasePath
-	if basePath != "" && basePath[0] != '/' {
-		basePath = "/" + basePath
-	}
+	basePath := sanitizeRedirectPath(a.Config.Server.BasePath)
 	encodedMsg := url.QueryEscape(message)
 	redirectURL := fmt.Sprintf("%s/login?sso_error=%s", basePath, encodedMsg)
 	r.RequestCtx.Redirect(redirectURL, fasthttp.StatusTemporaryRedirect)
+}
+
+// sanitizeRedirectPath ensures the path is safe for redirects by preventing
+// open redirect vulnerabilities (e.g., //evil.com or /\evil.com)
+func sanitizeRedirectPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Ensure path starts with /
+	if path[0] != '/' {
+		path = "/" + path
+	}
+	// Prevent protocol-relative URLs (//...) and backslash escapes (/\...)
+	// by stripping dangerous characters after the leading slash
+	for len(path) > 1 && (path[1] == '/' || path[1] == '\\') {
+		path = "/" + path[2:]
+	}
+	return path
 }
 
 func generateRandomString(n int) string {
