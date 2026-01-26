@@ -435,6 +435,7 @@ func (a *App) dispatchMessageSentWebhook(account *models.WhatsAppAccount, contac
 		ContactName:     contact.ProfileName,
 		MessageType:     msg.MessageType,
 		Content:         msg.Content,
+		MediaFilename:   msg.MediaFilename,
 		WhatsAppAccount: account.Name,
 		Direction:       models.DirectionOutgoing,
 		SentByUserID:    sentByUserID,
