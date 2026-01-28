@@ -3,12 +3,12 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/templateutil"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
@@ -271,7 +271,7 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 	case models.MessageTypeTemplate:
 		if req.Template != nil {
 			// Store actual rendered content instead of just template name
-			content := replaceTemplateParams(req.Template.BodyContent, req.BodyParams)
+			content := templateutil.ReplaceWithStringParams(req.Template.BodyContent, req.BodyParams)
 			if content == "" {
 				content = fmt.Sprintf("[Template: %s]", req.Template.DisplayName)
 			}
@@ -329,8 +329,10 @@ func (a *App) buildInteractiveData(req OutgoingMessageRequest) models.JSONB {
 
 // finalizeMessageSend updates message status and triggers post-send actions
 func (a *App) finalizeMessageSend(msg *models.Message, req OutgoingMessageRequest, opts MessageSendOptions, wamid string, err error) {
+	// Use Where instead of Model(msg) to avoid mutating the shared msg struct,
+	// which may be read concurrently by the caller when sending is async.
 	if err != nil {
-		a.DB.Model(msg).Updates(map[string]any{
+		a.DB.Model(&models.Message{}).Where("id = ?", msg.ID).Updates(map[string]any{
 			"status":        models.MessageStatusFailed,
 			"error_message": err.Error(),
 		})
@@ -338,7 +340,7 @@ func (a *App) finalizeMessageSend(msg *models.Message, req OutgoingMessageReques
 		return
 	}
 
-	a.DB.Model(msg).Updates(map[string]any{
+	a.DB.Model(&models.Message{}).Where("id = ?", msg.ID).Updates(map[string]any{
 		"status":               models.MessageStatusSent,
 		"whats_app_message_id": wamid,
 	})
@@ -499,7 +501,7 @@ type SendTemplateMessageRequest struct {
 
 // SendTemplateMessage sends a template message to a contact or phone number
 func (a *App) SendTemplateMessage(r *fastglue.Request) error {
-	orgID, err := getOrganizationID(r)
+	orgID, err := a.getOrgID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
@@ -527,9 +529,11 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		if err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid template_id", nil, "")
 		}
-		if err := a.DB.Where("id = ? AND organization_id = ?", templateID, orgID).First(&template).Error; err != nil {
-			return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Template not found", nil, "")
+		t, err := findByIDAndOrg[models.Template](a.DB, r, templateID, orgID, "Template")
+		if err != nil {
+			return nil
 		}
+		template = *t
 	} else {
 		if err := a.DB.Where("name = ? AND organization_id = ?", req.TemplateName, orgID).First(&template).Error; err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Template not found", nil, "")
@@ -550,11 +554,11 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		if err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid contact_id", nil, "")
 		}
-		var c models.Contact
-		if err := a.DB.Where("id = ? AND organization_id = ?", cID, orgID).First(&c).Error; err != nil {
-			return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Contact not found", nil, "")
+		c, err := findByIDAndOrg[models.Contact](a.DB, r, cID, orgID, "Contact")
+		if err != nil {
+			return nil
 		}
-		contact = &c
+		contact = c
 		phoneNumber = c.PhoneNumber
 	} else {
 		// Find or create contact from phone number
@@ -601,8 +605,8 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	}
 
 	// Extract parameter names and resolve values
-	paramNames := ExtractParamNamesFromContent(template.BodyContent)
-	bodyParams := ResolveParams(paramNames, req.TemplateParams)
+	paramNames := templateutil.ExtParamNames(template.BodyContent)
+	bodyParams := templateutil.ResolveParamsFromMap(paramNames, req.TemplateParams)
 
 	// Validate that all required parameters are provided
 	if len(paramNames) > 0 {
@@ -645,75 +649,3 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	})
 }
 
-// ExtractParamNamesFromContent extracts parameter names from template content
-// Supports both positional ({{1}}, {{2}}) and named ({{name}}, {{order_id}}) parameters
-var templateParamPattern = regexp.MustCompile(`\{\{([^}]+)\}\}`)
-
-func ExtractParamNamesFromContent(content string) []string {
-	matches := templateParamPattern.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var names []string
-	for _, match := range matches {
-		if len(match) > 1 {
-			name := strings.TrimSpace(match[1])
-			if name != "" && !seen[name] {
-				seen[name] = true
-				names = append(names, name)
-			}
-		}
-	}
-	return names
-}
-
-// replaceTemplateParams replaces {{1}}, {{2}}, {{name}}, etc. placeholders with actual values
-func replaceTemplateParams(content string, params map[string]string) string {
-	if content == "" || len(params) == 0 {
-		return content
-	}
-
-	result := content
-	// Extract param names from content to replace placeholders
-	paramNames := ExtractParamNamesFromContent(content)
-	for i, name := range paramNames {
-		// Try to get value by name first (works for both named and positional)
-		if val, ok := params[name]; ok {
-			result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", name), val)
-			continue
-		}
-		// Fall back to positional key (1-indexed)
-		key := fmt.Sprintf("%d", i+1)
-		if val, ok := params[key]; ok {
-			result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", name), val)
-		}
-	}
-	return result
-}
-
-// ResolveParams resolves both positional and named parameters to ordered values
-func ResolveParams(paramNames []string, params map[string]string) []string {
-	if len(paramNames) == 0 || len(params) == 0 {
-		return nil
-	}
-
-	result := make([]string, len(paramNames))
-	for i, name := range paramNames {
-		// Try named key first
-		if val, ok := params[name]; ok {
-			result[i] = val
-			continue
-		}
-		// Fall back to positional key (1-indexed)
-		key := fmt.Sprintf("%d", i+1)
-		if val, ok := params[key]; ok {
-			result[i] = val
-			continue
-		}
-		// Default to empty string
-		result[i] = ""
-	}
-	return result
-}
