@@ -215,6 +215,12 @@ func runServer(args []string) {
 	go slaProcessor.Start(slaCtx)
 	lo.Info("SLA processor started")
 
+	// Start media cleanup processor (runs every 6 hours)
+	mediaCleanupProcessor := handlers.NewMediaCleanupProcessor(app, 6*time.Hour)
+	mediaCleanupCtx, mediaCleanupCancel := context.WithCancel(context.Background())
+	go mediaCleanupProcessor.Start(mediaCleanupCtx)
+	lo.Info("Media cleanup processor started")
+
 	// Start embedded workers
 	var workers []*worker.Worker
 	var workerCancel context.CancelFunc
@@ -258,6 +264,9 @@ func runServer(args []string) {
 	lo.Info("Stopping SLA processor...")
 	slaCancel()
 	slaProcessor.Stop()
+	lo.Info("Stopping media cleanup processor...")
+	mediaCleanupCancel()
+	mediaCleanupProcessor.Stop()
 	lo.Info("SLA processor stopped")
 
 	// Stop workers first
