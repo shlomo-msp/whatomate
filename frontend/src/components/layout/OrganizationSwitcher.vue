@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Building2, RefreshCw } from 'lucide-vue-next'
+import { Building2, Plus, RefreshCw } from 'lucide-vue-next'
 import { organizationsService } from '@/services/api'
 import { toast } from 'vue-sonner'
 
@@ -62,6 +62,10 @@ watch(() => authStore.user?.is_super_admin, async (isSuperAdmin) => {
 
 const handleOrgChange = (value: string | number | bigint | Record<string, any> | null) => {
   if (!value || typeof value !== 'string') return
+  if (value === '__create__') {
+    showCreateDialog.value = true
+    return
+  }
   organizationsStore.selectOrganization(value)
   // Reload the page to refresh data with new org context
   window.location.reload()
@@ -136,16 +140,14 @@ const createOrganization = async () => {
                 <span>{{ org.name }}</span>
               </div>
             </SelectItem>
+            <SelectItem value="__create__">
+              <div class="flex items-center gap-2">
+                <Plus class="h-3.5 w-3.5 text-muted-foreground" />
+                <span>Add organization</span>
+              </div>
+            </SelectItem>
           </SelectContent>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-7 text-[12px]"
-          @click="showCreateDialog = true"
-        >
-          Add organization
-        </Button>
       </div>
       <div v-else-if="organizationsStore.loading" class="text-[12px] text-muted-foreground px-1">
         Loading...
@@ -200,4 +202,5 @@ const createOrganization = async () => {
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
 </template>

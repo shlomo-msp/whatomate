@@ -644,6 +644,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/organizations", app.CreateOrganization)
 	g.GET("/api/organizations", app.ListOrganizations)
 	g.GET("/api/organizations/current", app.GetCurrentOrganization)
+	g.DELETE("/api/organizations/{id}", app.DeleteOrganization)
 
 	// SSO Settings (admin only - enforced by middleware)
 	g.GET("/api/settings/sso", app.GetSSOSettings)
