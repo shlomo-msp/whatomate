@@ -415,7 +415,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		path := string(r.RequestCtx.Path())
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
-			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
+			path == "/api/auth/login" || path == "/api/auth/refresh" ||
 			path == "/api/webhook" || path == "/ws" {
 			return r
 		}
@@ -620,6 +620,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.PUT("/api/org/settings", app.UpdateOrganizationSettings)
 
 	// Organizations (super admin only)
+	g.POST("/api/organizations", app.CreateOrganization)
 	g.GET("/api/organizations", app.ListOrganizations)
 	g.GET("/api/organizations/current", app.GetCurrentOrganization)
 
