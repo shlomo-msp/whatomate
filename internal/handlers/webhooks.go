@@ -168,7 +168,7 @@ func (a *App) CreateWebhook(r *fastglue.Request) error {
 	// Invalidate cache
 	a.InvalidateWebhooksCache(orgID)
 
-	return r.SendEnvelope(webhookToResponse(webhook, 0))
+	return r.SendEnvelope(webhookToResponse(webhook, 0, 0))
 }
 
 // UpdateWebhook updates an existing webhook
@@ -227,7 +227,7 @@ func (a *App) UpdateWebhook(r *fastglue.Request) error {
 	// Invalidate cache
 	a.InvalidateWebhooksCache(orgID)
 
-	return r.SendEnvelope(webhookToResponse(*webhook, 0))
+	return r.SendEnvelope(webhookToResponse(*webhook, 0, 0))
 }
 
 // DeleteWebhook deletes a webhook
