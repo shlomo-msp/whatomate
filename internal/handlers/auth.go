@@ -106,6 +106,11 @@ func (a *App) Login(r *fastglue.Request) error {
 
 // Register creates a new user and organization
 func (a *App) Register(r *fastglue.Request) error {
+	// Super admins only
+	if !middleware.IsSuperAdmin(r) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can create organizations", nil, "")
+	}
+
 	var req RegisterRequest
 	if err := r.Decode(&req, "json"); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")

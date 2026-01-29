@@ -3,6 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { useAuthStore } from '@/stores/auth'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -10,7 +12,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Building2, RefreshCw } from 'lucide-vue-next'
+import { organizationsService } from '@/services/api'
+import { toast } from 'vue-sonner'
 
 const props = defineProps<{
   collapsed?: boolean
@@ -19,6 +31,9 @@ const props = defineProps<{
 const organizationsStore = useOrganizationsStore()
 const authStore = useAuthStore()
 const isRefreshing = ref(false)
+const showCreateDialog = ref(false)
+const newOrgName = ref('')
+const isCreating = ref(false)
 
 // Only show for super admins
 const isSuperAdmin = () => authStore.user?.is_super_admin || false
@@ -56,6 +71,32 @@ const refreshOrgs = async () => {
   isRefreshing.value = true
   await organizationsStore.fetchOrganizations()
   isRefreshing.value = false
+}
+
+const createOrganization = async () => {
+  const name = newOrgName.value.trim()
+  if (!name) {
+    toast.error('Organization name is required')
+    return
+  }
+
+  isCreating.value = true
+  try {
+    const response = await organizationsService.create({ name })
+    const org = (response.data as any).data?.organization || response.data?.organization
+    await organizationsStore.fetchOrganizations()
+    if (org?.id) {
+      organizationsStore.selectOrganization(org.id)
+      window.location.reload()
+    }
+    newOrgName.value = ''
+    showCreateDialog.value = false
+    toast.success('Organization created')
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || 'Failed to create organization')
+  } finally {
+    isCreating.value = false
+  }
 }
 </script>
 
@@ -97,6 +138,14 @@ const refreshOrgs = async () => {
           </SelectItem>
         </SelectContent>
       </Select>
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-7 text-[12px]"
+        @click="showCreateDialog = true"
+      >
+        Add organization
+      </Button>
       <div v-else-if="organizationsStore.loading" class="text-[12px] text-muted-foreground px-1">
         Loading...
       </div>
@@ -120,4 +169,34 @@ const refreshOrgs = async () => {
       </Button>
     </div>
   </div>
+
+  <Dialog v-model:open="showCreateDialog">
+    <DialogContent class="sm:max-w-[420px]">
+      <DialogHeader>
+        <DialogTitle>Create organization</DialogTitle>
+        <DialogDescription>
+          Add a new organization to manage within this deployment.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div class="space-y-2">
+        <Label for="org-name">Organization name</Label>
+        <Input
+          id="org-name"
+          v-model="newOrgName"
+          placeholder="Acme Inc."
+          :disabled="isCreating"
+        />
+      </div>
+
+      <DialogFooter class="gap-2">
+        <Button variant="outline" @click="showCreateDialog = false" :disabled="isCreating">
+          Cancel
+        </Button>
+        <Button @click="createOrganization" :disabled="isCreating">
+          Create
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

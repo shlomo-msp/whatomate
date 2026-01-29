@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/database"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -118,6 +119,68 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 
 	return r.SendEnvelope(map[string]interface{}{
 		"message": "Settings updated successfully",
+	})
+}
+
+// CreateOrganization creates a new organization (super admin only)
+func (a *App) CreateOrganization(r *fastglue.Request) error {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok || !a.IsSuperAdmin(userID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can create organizations", nil, "")
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+	if req.Name == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Organization name is required", nil, "")
+	}
+
+	org := models.Organization{
+		Name: req.Name,
+		Slug: generateSlug(req.Name),
+	}
+
+	tx := a.DB.Begin()
+	if tx.Error != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	if err := tx.Create(&org).Error; err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	if err := database.SeedSystemRolesForOrg(tx, org.ID); err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to seed roles", nil, "")
+	}
+
+	chatbotSettings := models.ChatbotSettings{
+		OrganizationID:     org.ID,
+		IsEnabled:          false,
+		SessionTimeoutMins: 30,
+	}
+	if err := tx.Create(&chatbotSettings).Error; err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create chatbot settings", nil, "")
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]any{
+		"organization": OrganizationResponse{
+			ID:        org.ID,
+			Name:      org.Name,
+			Slug:      org.Slug,
+			CreatedAt: org.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		},
 	})
 }
 
