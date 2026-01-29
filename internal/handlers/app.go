@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/shridarpatil/whatomate/internal/config"
+	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/internal/queue"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
@@ -78,7 +79,18 @@ func (a *App) getOrgID(r *fastglue.Request) (uuid.UUID, error) {
 				}
 			}
 		}
-		// No header or invalid org ID - fall back to user's org
+		// No header or invalid org ID - fall back to user's org (if it exists)
+		var count int64
+		if err := a.DB.Table("organizations").Where("id = ?", defaultOrgID).Count(&count).Error; err == nil && count > 0 {
+			return defaultOrgID, nil
+		}
+
+		// If user's org was deleted, fall back to oldest organization
+		var fallback models.Organization
+		if err := a.DB.Order("created_at ASC").First(&fallback).Error; err != nil {
+			return uuid.Nil, errors.New("no organizations available")
+		}
+		return fallback.ID, nil
 	}
 
 	return defaultOrgID, nil

@@ -290,12 +290,37 @@ func (a *App) DeleteOrganization(r *fastglue.Request) error {
 		return nil
 	}
 
+	// Prevent deleting the current user's default organization
+	var userOrgID uuid.UUID
+	orgIDVal := r.RequestCtx.UserValue("organization_id")
+	switch v := orgIDVal.(type) {
+	case uuid.UUID:
+		userOrgID = v
+	case string:
+		parsed, parseErr := uuid.Parse(v)
+		if parseErr == nil {
+			userOrgID = parsed
+		}
+	}
+	if userOrgID != uuid.Nil && userOrgID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete your current organization", nil, "")
+	}
+
 	var orgCount int64
 	if err := a.DB.Model(&models.Organization{}).Count(&orgCount).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to count organizations", nil, "")
 	}
 	if orgCount <= 1 {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the last organization", nil, "")
+	}
+
+	// Prevent deleting the first (default) organization
+	var firstOrg models.Organization
+	if err := a.DB.Order("created_at ASC").First(&firstOrg).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load default organization", nil, "")
+	}
+	if firstOrg.ID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the default organization", nil, "")
 	}
 
 	var org models.Organization

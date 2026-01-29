@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Building2, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Building2, Plus, RefreshCw } from 'lucide-vue-next'
 import { organizationsService } from '@/services/api'
 import { toast } from 'vue-sonner'
 
@@ -32,10 +32,8 @@ const organizationsStore = useOrganizationsStore()
 const authStore = useAuthStore()
 const isRefreshing = ref(false)
 const showCreateDialog = ref(false)
-const showDeleteDialog = ref(false)
 const newOrgName = ref('')
 const isCreating = ref(false)
-const isDeleting = ref(false)
 
 // Only show for super admins
 const isSuperAdmin = () => authStore.user?.is_super_admin || false
@@ -66,10 +64,6 @@ const handleOrgChange = (value: string | number | bigint | Record<string, any> |
   if (!value || typeof value !== 'string') return
   if (value === '__create__') {
     showCreateDialog.value = true
-    return
-  }
-  if (value === '__delete__') {
-    openDeleteDialog()
     return
   }
   organizationsStore.selectOrganization(value)
@@ -109,42 +103,6 @@ const createOrganization = async () => {
   }
 }
 
-const openDeleteDialog = () => {
-  if (organizationsStore.organizations.length <= 1) {
-    toast.error('Cannot delete the last organization')
-    return
-  }
-  showDeleteDialog.value = true
-}
-
-const deleteOrganization = async () => {
-  const orgId = organizationsStore.selectedOrgId
-  if (!orgId) return
-
-  if (organizationsStore.organizations.length <= 1) {
-    toast.error('Cannot delete the last organization')
-    return
-  }
-
-  isDeleting.value = true
-  try {
-    await organizationsService.delete(orgId)
-    await organizationsStore.fetchOrganizations()
-    const nextOrg = organizationsStore.organizations[0]
-    if (nextOrg?.id) {
-      organizationsStore.selectOrganization(nextOrg.id)
-      window.location.reload()
-    } else {
-      organizationsStore.clearSelection()
-    }
-    showDeleteDialog.value = false
-    toast.success('Organization deleted')
-  } catch (err: any) {
-    toast.error(err.response?.data?.message || 'Failed to delete organization')
-  } finally {
-    isDeleting.value = false
-  }
-}
 </script>
 
 <template>
@@ -187,15 +145,6 @@ const deleteOrganization = async () => {
               <div class="flex items-center gap-2">
                 <Plus class="h-3.5 w-3.5 text-muted-foreground" />
                 <span>Add organization</span>
-              </div>
-            </SelectItem>
-            <SelectItem
-              v-if="organizationsStore.organizations.length > 1"
-              value="__delete__"
-            >
-              <div class="flex items-center gap-2 text-destructive">
-                <Trash2 class="h-3.5 w-3.5" />
-                <span>Delete organization</span>
               </div>
             </SelectItem>
           </SelectContent>
@@ -255,27 +204,4 @@ const deleteOrganization = async () => {
     </DialogContent>
   </Dialog>
 
-  <Dialog v-model:open="showDeleteDialog">
-    <DialogContent class="sm:max-w-[420px]">
-      <DialogHeader>
-        <DialogTitle>Delete organization</DialogTitle>
-        <DialogDescription>
-          This will delete the selected organization and all of its data. This action cannot be undone.
-        </DialogDescription>
-      </DialogHeader>
-
-      <div class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-        You must have at least one organization. Deleting the last organization is not allowed.
-      </div>
-
-      <DialogFooter class="gap-2">
-        <Button variant="outline" @click="showDeleteDialog = false" :disabled="isDeleting">
-          Cancel
-        </Button>
-        <Button variant="destructive" @click="deleteOrganization" :disabled="isDeleting">
-          Delete
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>
