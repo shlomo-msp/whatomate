@@ -462,6 +462,7 @@ export interface Webhook {
   is_active: boolean
   has_secret: boolean
   failed_count?: number
+  retrying_count?: number
   created_at: string
   updated_at: string
 }

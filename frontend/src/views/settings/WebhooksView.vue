@@ -181,6 +181,9 @@ onMounted(() => fetchWebhooks())
                   <div class="flex items-center gap-2">
                     <Switch :checked="webhook.is_active" @update:checked="toggleWebhook(webhook)" />
                     <span class="text-sm text-muted-foreground">{{ webhook.is_active ? 'Active' : 'Inactive' }}</span>
+                    <Badge v-if="(webhook.retrying_count || 0) > 0" variant="outline" class="text-xs">
+                      Retrying: {{ webhook.retrying_count }}
+                    </Badge>
                     <Badge v-if="(webhook.failed_count || 0) > 0" variant="destructive" class="text-xs">
                       Failed: {{ webhook.failed_count }}
                     </Badge>
@@ -190,7 +193,7 @@ onMounted(() => fetchWebhooks())
                 <template #cell-actions="{ item: webhook }">
                   <div class="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" class="h-8 w-8" :disabled="isTesting === webhook.id" @click="testWebhook(webhook)"><Loader2 v-if="isTesting === webhook.id" class="h-4 w-4 animate-spin" /><Play v-else class="h-4 w-4" /></Button>
-                    <Button v-if="(webhook.failed_count || 0) > 0" variant="ghost" size="icon" class="h-8 w-8" :disabled="isRetrying === webhook.id" @click="retryFailed(webhook)"><Loader2 v-if="isRetrying === webhook.id" class="h-4 w-4 animate-spin" /><RotateCw v-else class="h-4 w-4" /></Button>
+                    <Button v-if="(webhook.failed_count || 0) > 0 || (webhook.retrying_count || 0) > 0" variant="ghost" size="icon" class="h-8 w-8" :disabled="isRetrying === webhook.id" @click="retryFailed(webhook)"><Loader2 v-if="isRetrying === webhook.id" class="h-4 w-4 animate-spin" /><RotateCw v-else class="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEditDialog(webhook)"><Pencil class="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="webhookToDelete = webhook; isDeleteDialogOpen = true"><Trash2 class="h-4 w-4" /></Button>
                   </div>

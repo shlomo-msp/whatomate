@@ -31,6 +31,7 @@ type WebhookResponse struct {
 	IsActive  bool              `json:"is_active"`
 	HasSecret bool              `json:"has_secret"`
 	FailedCount int64           `json:"failed_count"`
+	RetryingCount int64         `json:"retrying_count"`
 	CreatedAt string            `json:"created_at"`
 	UpdatedAt string            `json:"updated_at"`
 }
@@ -59,6 +60,7 @@ func (a *App) ListWebhooks(r *fastglue.Request) error {
 	}
 
 	failedCounts := map[uuid.UUID]int64{}
+	retryingCounts := map[uuid.UUID]int64{}
 	var rows []struct {
 		WebhookID uuid.UUID `gorm:"column:webhook_id"`
 		Count     int64     `gorm:"column:count"`
@@ -72,10 +74,19 @@ func (a *App) ListWebhooks(r *fastglue.Request) error {
 			failedCounts[row.WebhookID] = row.Count
 		}
 	}
+	if err := a.DB.Model(&models.WebhookDelivery{}).
+		Select("webhook_id, COUNT(*) as count").
+		Where("organization_id = ? AND status IN ? AND last_error <> ''", orgID, []string{"pending", "in_progress"}).
+		Group("webhook_id").
+		Scan(&rows).Error; err == nil {
+		for _, row := range rows {
+			retryingCounts[row.WebhookID] = row.Count
+		}
+	}
 
 	result := make([]WebhookResponse, len(webhooks))
 	for i, wh := range webhooks {
-		result[i] = webhookToResponse(wh, failedCounts[wh.ID])
+		result[i] = webhookToResponse(wh, failedCounts[wh.ID], retryingCounts[wh.ID])
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
@@ -105,8 +116,12 @@ func (a *App) GetWebhook(r *fastglue.Request) error {
 	_ = a.DB.Model(&models.WebhookDelivery{}).
 		Where("organization_id = ? AND webhook_id = ? AND status = ?", orgID, webhookID, "failed").
 		Count(&failedCount).Error
+	var retryingCount int64
+	_ = a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status IN ? AND last_error <> ''", orgID, webhookID, []string{"pending", "in_progress"}).
+		Count(&retryingCount).Error
 
-	return r.SendEnvelope(webhookToResponse(*webhook, failedCount))
+	return r.SendEnvelope(webhookToResponse(*webhook, failedCount, retryingCount))
 }
 
 // CreateWebhook creates a new webhook
@@ -307,7 +322,8 @@ func (a *App) RetryFailedWebhookDeliveries(r *fastglue.Request) error {
 
 	now := time.Now().UTC()
 	result := a.DB.Model(&models.WebhookDelivery{}).
-		Where("organization_id = ? AND webhook_id = ? AND status = ?", orgID, webhookID, "failed").
+		Where("organization_id = ? AND webhook_id = ? AND (status = ? OR (status IN ? AND last_error <> ''))",
+			orgID, webhookID, "failed", []string{"pending", "in_progress"}).
 		Updates(map[string]interface{}{
 			"status":                "pending",
 			"next_attempt_at":       now,
@@ -326,7 +342,7 @@ func (a *App) RetryFailedWebhookDeliveries(r *fastglue.Request) error {
 	})
 }
 
-func webhookToResponse(wh models.Webhook, failedCount int64) WebhookResponse {
+func webhookToResponse(wh models.Webhook, failedCount int64, retryingCount int64) WebhookResponse {
 	// Convert events
 	events := make([]string, len(wh.Events))
 	copy(events, wh.Events)
@@ -348,6 +364,7 @@ func webhookToResponse(wh models.Webhook, failedCount int64) WebhookResponse {
 		IsActive:  wh.IsActive,
 		HasSecret: wh.Secret != "",
 		FailedCount: failedCount,
+		RetryingCount: retryingCount,
 		CreatedAt: wh.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: wh.UpdatedAt.Format(time.RFC3339),
 	}
