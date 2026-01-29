@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-
 // NewPostgres creates a new PostgreSQL connection
 func NewPostgres(cfg *config.DatabaseConfig, debug bool) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
@@ -238,7 +237,8 @@ func getIndexes() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_org_provider ON sso_providers(organization_id, provider)`,
 		// Teams indexes
 		`CREATE INDEX IF NOT EXISTS idx_teams_org_active ON teams(organization_id, is_active)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_unique ON team_members(team_id, user_id)`,
+		// Create partial unique index (soft-deleted members)
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_unique ON team_members(team_id, user_id) WHERE deleted_at IS NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)`,
 		// Custom roles indexes
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_roles_org_name ON custom_roles(organization_id, name)`,
