@@ -277,3 +277,35 @@ func (a *App) GetCurrentOrganization(r *fastglue.Request) error {
 		CreatedAt: org.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
+
+// DeleteOrganization deletes an organization (super admin only)
+func (a *App) DeleteOrganization(r *fastglue.Request) error {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok || !a.IsSuperAdmin(userID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can delete organizations", nil, "")
+	}
+
+	id, err := parsePathUUID(r, "id", "organization")
+	if err != nil {
+		return nil
+	}
+
+	var orgCount int64
+	if err := a.DB.Model(&models.Organization{}).Count(&orgCount).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to count organizations", nil, "")
+	}
+	if orgCount <= 1 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the last organization", nil, "")
+	}
+
+	var org models.Organization
+	if err := a.DB.Where("id = ?", id).First(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Organization not found", nil, "")
+	}
+
+	if err := a.DB.Delete(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete organization", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]string{"message": "Organization deleted successfully"})
+}
