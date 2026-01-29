@@ -117,35 +117,36 @@ const createOrganization = async () => {
           <RefreshCw :class="['h-3 w-3', isRefreshing && 'animate-spin']" />
         </Button>
       </div>
-      <Select
-        v-if="organizationsStore.organizations.length > 0"
-        :model-value="organizationsStore.selectedOrgId || ''"
-        @update:model-value="handleOrgChange"
-      >
-        <SelectTrigger class="h-8 text-[13px]">
-          <SelectValue placeholder="Select organization" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem
-            v-for="org in organizationsStore.organizations"
-            :key="org.id"
-            :value="org.id"
-          >
-            <div class="flex items-center gap-2">
-              <Building2 class="h-3.5 w-3.5 text-muted-foreground" />
-              <span>{{ org.name }}</span>
-            </div>
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <Button
-        variant="outline"
-        size="sm"
-        class="h-7 text-[12px]"
-        @click="showCreateDialog = true"
-      >
-        Add organization
-      </Button>
+      <div v-if="organizationsStore.organizations.length > 0" class="space-y-2">
+        <Select
+          :model-value="organizationsStore.selectedOrgId || ''"
+          @update:model-value="handleOrgChange"
+        >
+          <SelectTrigger class="h-8 text-[13px]">
+            <SelectValue placeholder="Select organization" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="org in organizationsStore.organizations"
+              :key="org.id"
+              :value="org.id"
+            >
+              <div class="flex items-center gap-2">
+                <Building2 class="h-3.5 w-3.5 text-muted-foreground" />
+                <span>{{ org.name }}</span>
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-7 text-[12px]"
+          @click="showCreateDialog = true"
+        >
+          Add organization
+        </Button>
+      </div>
       <div v-else-if="organizationsStore.loading" class="text-[12px] text-muted-foreground px-1">
         Loading...
       </div>
