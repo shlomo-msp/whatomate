@@ -215,6 +215,12 @@ func runServer(args []string) {
 	go slaProcessor.Start(slaCtx)
 	lo.Info("SLA processor started")
 
+	// Start webhook delivery processor (runs every minute)
+	webhookDeliveryProcessor := handlers.NewWebhookDeliveryProcessor(app, time.Minute)
+	webhookDeliveryCtx, webhookDeliveryCancel := context.WithCancel(context.Background())
+	go webhookDeliveryProcessor.Start(webhookDeliveryCtx)
+	lo.Info("Webhook delivery processor started")
+
 	// Start media cleanup processor (runs every 6 hours)
 	mediaCleanupProcessor := handlers.NewMediaCleanupProcessor(app, 6*time.Hour)
 	mediaCleanupCtx, mediaCleanupCancel := context.WithCancel(context.Background())
@@ -268,6 +274,12 @@ func runServer(args []string) {
 	mediaCleanupCancel()
 	mediaCleanupProcessor.Stop()
 	lo.Info("SLA processor stopped")
+
+	// Stop webhook delivery processor
+	lo.Info("Stopping webhook delivery processor...")
+	webhookDeliveryCancel()
+	webhookDeliveryProcessor.Stop()
+	lo.Info("Webhook delivery processor stopped")
 
 	// Stop workers first
 	if workerCancel != nil {
@@ -645,6 +657,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.PUT("/api/webhooks/{id}", app.UpdateWebhook)
 	g.DELETE("/api/webhooks/{id}", app.DeleteWebhook)
 	g.POST("/api/webhooks/{id}/test", app.TestWebhook)
+	g.POST("/api/webhooks/{id}/retry-failed", app.RetryFailedWebhookDeliveries)
 
 	// Custom Actions
 	g.GET("/api/custom-actions", app.ListCustomActions)

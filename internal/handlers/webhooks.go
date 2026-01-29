@@ -30,6 +30,7 @@ type WebhookResponse struct {
 	Headers   map[string]string `json:"headers"`
 	IsActive  bool              `json:"is_active"`
 	HasSecret bool              `json:"has_secret"`
+	FailedCount int64           `json:"failed_count"`
 	CreatedAt string            `json:"created_at"`
 	UpdatedAt string            `json:"updated_at"`
 }
@@ -57,9 +58,24 @@ func (a *App) ListWebhooks(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list webhooks", nil, "")
 	}
 
+	failedCounts := map[uuid.UUID]int64{}
+	var rows []struct {
+		WebhookID uuid.UUID `gorm:"column:webhook_id"`
+		Count     int64     `gorm:"column:count"`
+	}
+	if err := a.DB.Model(&models.WebhookDelivery{}).
+		Select("webhook_id, COUNT(*) as count").
+		Where("organization_id = ? AND status = ?", orgID, "failed").
+		Group("webhook_id").
+		Scan(&rows).Error; err == nil {
+		for _, row := range rows {
+			failedCounts[row.WebhookID] = row.Count
+		}
+	}
+
 	result := make([]WebhookResponse, len(webhooks))
 	for i, wh := range webhooks {
-		result[i] = webhookToResponse(wh)
+		result[i] = webhookToResponse(wh, failedCounts[wh.ID])
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
@@ -85,7 +101,12 @@ func (a *App) GetWebhook(r *fastglue.Request) error {
 		return nil
 	}
 
-	return r.SendEnvelope(webhookToResponse(*webhook))
+	var failedCount int64
+	_ = a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status = ?", orgID, webhookID, "failed").
+		Count(&failedCount).Error
+
+	return r.SendEnvelope(webhookToResponse(*webhook, failedCount))
 }
 
 // CreateWebhook creates a new webhook
@@ -246,9 +267,10 @@ func (a *App) TestWebhook(r *fastglue.Request) error {
 	}
 
 	payload := OutboundWebhookPayload{
-		Event:     "test",
-		Timestamp: time.Now().UTC(),
-		Data:      testData,
+		DeliveryID: uuid.New().String(),
+		Event:      "test",
+		Timestamp:  time.Now().UTC(),
+		Data:       testData,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -260,14 +282,51 @@ func (a *App) TestWebhook(r *fastglue.Request) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := a.sendWebhookRequest(ctx, *webhook, jsonData); err != nil {
+	if err := a.sendWebhookRequest(ctx, webhook.URL, webhook.Headers, webhook.Secret, jsonData); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Webhook test failed: "+err.Error(), nil, "")
 	}
 
 	return r.SendEnvelope(map[string]string{"message": "Test webhook sent successfully"})
 }
 
-func webhookToResponse(wh models.Webhook) WebhookResponse {
+// RetryFailedWebhookDeliveries resets failed deliveries for a webhook
+func (a *App) RetryFailedWebhookDeliveries(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	webhookID, err := parsePathUUID(r, "id", "webhook")
+	if err != nil {
+		return nil
+	}
+
+	if _, err := findByIDAndOrg[models.Webhook](a.DB, r, webhookID, orgID, "Webhook"); err != nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	result := a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status = ?", orgID, webhookID, "failed").
+		Updates(map[string]interface{}{
+			"status":                "pending",
+			"next_attempt_at":       now,
+			"processing_started_at": nil,
+			"last_error":            "",
+			"last_status_code":      0,
+		})
+
+	if result.Error != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to retry webhook deliveries", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]any{
+		"message": "Retry scheduled",
+		"count":   result.RowsAffected,
+	})
+}
+
+func webhookToResponse(wh models.Webhook, failedCount int64) WebhookResponse {
 	// Convert events
 	events := make([]string, len(wh.Events))
 	copy(events, wh.Events)
@@ -288,6 +347,7 @@ func webhookToResponse(wh models.Webhook) WebhookResponse {
 		Headers:   headers,
 		IsActive:  wh.IsActive,
 		HasSecret: wh.Secret != "",
+		FailedCount: failedCount,
 		CreatedAt: wh.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: wh.UpdatedAt.Format(time.RFC3339),
 	}

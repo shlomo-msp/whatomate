@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageHeader, DataTable, DeleteConfirmDialog, type Column } from '@/components/shared'
 import { toast } from 'vue-sonner'
-import { Plus, Trash2, Pencil, Webhook as WebhookIcon, Play, Loader2 } from 'lucide-vue-next'
+import { Plus, Trash2, Pencil, Webhook as WebhookIcon, Play, Loader2, RotateCw } from 'lucide-vue-next'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 
@@ -24,6 +24,7 @@ const availableEvents = ref<WebhookEvent[]>([])
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isTesting = ref<string | null>(null)
+const isRetrying = ref<string | null>(null)
 
 const isDialogOpen = ref(false)
 const isEditing = ref(false)
@@ -106,6 +107,23 @@ async function testWebhook(webhook: Webhook) {
   finally { isTesting.value = null }
 }
 
+async function retryFailed(webhook: Webhook) {
+  isRetrying.value = webhook.id
+  try {
+    const response = await webhooksService.retryFailed(webhook.id)
+    const count = (response.data as any).data?.count ?? response.data?.count ?? 0
+    if (count > 0) {
+      toast.success(`Retry scheduled for ${count} delivery${count === 1 ? '' : 'ies'}`)
+    } else {
+      toast.message('No failed deliveries to retry')
+    }
+  } catch (e) {
+    toast.error(getErrorMessage(e, 'Failed to retry deliveries'))
+  } finally {
+    isRetrying.value = null
+  }
+}
+
 async function deleteWebhook() {
   if (!webhookToDelete.value) return
   try { await webhooksService.delete(webhookToDelete.value.id); await fetchWebhooks(); toast.success('Webhook deleted'); isDeleteDialogOpen.value = false; webhookToDelete.value = null }
@@ -163,12 +181,16 @@ onMounted(() => fetchWebhooks())
                   <div class="flex items-center gap-2">
                     <Switch :checked="webhook.is_active" @update:checked="toggleWebhook(webhook)" />
                     <span class="text-sm text-muted-foreground">{{ webhook.is_active ? 'Active' : 'Inactive' }}</span>
+                    <Badge v-if="(webhook.failed_count || 0) > 0" variant="destructive" class="text-xs">
+                      Failed: {{ webhook.failed_count }}
+                    </Badge>
                   </div>
                 </template>
                 <template #cell-created="{ item: webhook }"><span class="text-muted-foreground">{{ formatDate(webhook.created_at) }}</span></template>
                 <template #cell-actions="{ item: webhook }">
                   <div class="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" class="h-8 w-8" :disabled="isTesting === webhook.id" @click="testWebhook(webhook)"><Loader2 v-if="isTesting === webhook.id" class="h-4 w-4 animate-spin" /><Play v-else class="h-4 w-4" /></Button>
+                    <Button v-if="(webhook.failed_count || 0) > 0" variant="ghost" size="icon" class="h-8 w-8" :disabled="isRetrying === webhook.id" @click="retryFailed(webhook)"><Loader2 v-if="isRetrying === webhook.id" class="h-4 w-4 animate-spin" /><RotateCw v-else class="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEditDialog(webhook)"><Pencil class="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="webhookToDelete = webhook; isDeleteDialogOpen = true"><Trash2 class="h-4 w-4" /></Button>
                   </div>

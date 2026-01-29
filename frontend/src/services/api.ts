@@ -460,6 +460,7 @@ export interface Webhook {
   headers: Record<string, string>
   is_active: boolean
   has_secret: boolean
+  failed_count?: number
   created_at: string
   updated_at: string
 }
@@ -542,7 +543,8 @@ export const webhooksService = {
     is_active?: boolean
   }) => api.put<Webhook>(`/webhooks/${id}`, data),
   delete: (id: string) => api.delete(`/webhooks/${id}`),
-  test: (id: string) => api.post(`/webhooks/${id}/test`)
+  test: (id: string) => api.post(`/webhooks/${id}/test`),
+  retryFailed: (id: string) => api.post(`/webhooks/${id}/retry-failed`)
 }
 
 export interface CustomAction {
