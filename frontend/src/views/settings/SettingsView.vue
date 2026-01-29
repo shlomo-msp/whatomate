@@ -59,7 +59,9 @@ const generalSettings = ref({
   organization_name: 'My Organization',
   default_timezone: 'UTC',
   date_format: 'YYYY-MM-DD',
-  mask_phone_numbers: false
+  mask_phone_numbers: false,
+  auto_delete_media_enabled: false,
+  auto_delete_media_days: '30'
 })
 
 // Notification Settings
@@ -83,7 +85,9 @@ onMounted(async () => {
         organization_name: orgData.name || 'My Organization',
         default_timezone: orgData.settings?.timezone || 'UTC',
         date_format: orgData.settings?.date_format || 'YYYY-MM-DD',
-        mask_phone_numbers: orgData.settings?.mask_phone_numbers || false
+        mask_phone_numbers: orgData.settings?.mask_phone_numbers || false,
+        auto_delete_media_enabled: orgData.settings?.auto_delete_media_enabled || false,
+        auto_delete_media_days: String(orgData.settings?.auto_delete_media_days || 30)
       }
     }
 
@@ -118,7 +122,9 @@ async function saveGeneralSettings() {
       name: generalSettings.value.organization_name,
       timezone: generalSettings.value.default_timezone,
       date_format: generalSettings.value.date_format,
-      mask_phone_numbers: generalSettings.value.mask_phone_numbers
+      mask_phone_numbers: generalSettings.value.mask_phone_numbers,
+      auto_delete_media_enabled: generalSettings.value.auto_delete_media_enabled,
+      auto_delete_media_days: Number(generalSettings.value.auto_delete_media_days)
     })
     toast.success('General settings saved')
   } catch (error) {
@@ -263,6 +269,32 @@ const deleteOrganization = async () => {
                     :checked="generalSettings.mask_phone_numbers"
                     @update:checked="generalSettings.mask_phone_numbers = $event"
                   />
+                </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">Auto Delete Media</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">Delete local media files after a set period</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.auto_delete_media_enabled"
+                    @update:checked="generalSettings.auto_delete_media_enabled = $event"
+                  />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="space-y-2">
+                    <Label for="media_cleanup_days" class="text-white/70 light:text-gray-700">Delete After</Label>
+                    <Select v-model="generalSettings.auto_delete_media_days" :disabled="!generalSettings.auto_delete_media_enabled">
+                      <SelectTrigger class="bg-white/[0.04] border-white/[0.1] text-white/70 light:bg-white light:border-gray-200 light:text-gray-700">
+                        <SelectValue placeholder="Select period" />
+                      </SelectTrigger>
+                      <SelectContent class="bg-[#141414] border-white/[0.08] light:bg-white light:border-gray-200">
+                        <SelectItem value="7" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">7 days</SelectItem>
+                        <SelectItem value="30" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">30 days</SelectItem>
+                        <SelectItem value="90" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">90 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div class="flex justify-end">
                   <Button variant="outline" size="sm" class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50" @click="saveGeneralSettings" :disabled="isSubmitting">

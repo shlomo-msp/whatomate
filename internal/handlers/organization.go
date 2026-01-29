@@ -12,9 +12,11 @@ import (
 
 // OrganizationSettings represents the settings structure
 type OrganizationSettings struct {
-	MaskPhoneNumbers bool   `json:"mask_phone_numbers"`
-	Timezone         string `json:"timezone"`
-	DateFormat       string `json:"date_format"`
+	MaskPhoneNumbers       bool `json:"mask_phone_numbers"`
+	Timezone               string `json:"timezone"`
+	DateFormat             string `json:"date_format"`
+	AutoDeleteMediaEnabled bool `json:"auto_delete_media_enabled"`
+	AutoDeleteMediaDays    int  `json:"auto_delete_media_days"`
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -31,9 +33,11 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 
 	// Parse settings from JSONB
 	settings := OrganizationSettings{
-		MaskPhoneNumbers: false,
-		Timezone:         "UTC",
-		DateFormat:       "YYYY-MM-DD",
+		MaskPhoneNumbers:       false,
+		Timezone:               "UTC",
+		DateFormat:             "YYYY-MM-DD",
+		AutoDeleteMediaEnabled: false,
+		AutoDeleteMediaDays:    30,
 	}
 
 	if org.Settings != nil {
@@ -45,6 +49,12 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		}
 		if v, ok := org.Settings["date_format"].(string); ok && v != "" {
 			settings.DateFormat = v
+		}
+		if v, ok := org.Settings["auto_delete_media_enabled"].(bool); ok {
+			settings.AutoDeleteMediaEnabled = v
+		}
+		if v, ok := org.Settings["auto_delete_media_days"].(float64); ok && v > 0 {
+			settings.AutoDeleteMediaDays = int(v)
 		}
 	}
 
@@ -62,10 +72,12 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		MaskPhoneNumbers *bool   `json:"mask_phone_numbers"`
-		Timezone         *string `json:"timezone"`
-		DateFormat       *string `json:"date_format"`
-		Name             *string `json:"name"`
+		MaskPhoneNumbers       *bool   `json:"mask_phone_numbers"`
+		Timezone               *string `json:"timezone"`
+		DateFormat             *string `json:"date_format"`
+		AutoDeleteMediaEnabled *bool   `json:"auto_delete_media_enabled"`
+		AutoDeleteMediaDays    *int    `json:"auto_delete_media_days"`
+		Name                   *string `json:"name"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -90,6 +102,12 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.DateFormat != nil {
 		org.Settings["date_format"] = *req.DateFormat
+	}
+	if req.AutoDeleteMediaEnabled != nil {
+		org.Settings["auto_delete_media_enabled"] = *req.AutoDeleteMediaEnabled
+	}
+	if req.AutoDeleteMediaDays != nil && *req.AutoDeleteMediaDays > 0 {
+		org.Settings["auto_delete_media_days"] = *req.AutoDeleteMediaDays
 	}
 	if req.Name != nil && *req.Name != "" {
 		org.Name = *req.Name

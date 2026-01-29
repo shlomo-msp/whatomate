@@ -432,6 +432,8 @@ export const organizationService = {
     mask_phone_numbers?: boolean
     timezone?: string
     date_format?: string
+    auto_delete_media_enabled?: boolean
+    auto_delete_media_days?: number
     name?: string
   }) => api.put('/org/settings', data)
 }

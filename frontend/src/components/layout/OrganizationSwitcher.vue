@@ -102,7 +102,6 @@ const createOrganization = async () => {
     isCreating.value = false
   }
 }
-
 </script>
 
 <template>
