@@ -56,34 +56,8 @@ import {
   X,
   GripVertical
 } from 'lucide-vue-next'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js'
-import { Line, Bar, Pie } from 'vue-chartjs'
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-)
+// Centralized Chart.js setup (registered once)
+import { Line, Bar, Pie } from '@/lib/charts'
 import type { DateRange } from 'reka-ui'
 import { CalendarDate } from '@internationalized/date'
 import { useToast } from '@/components/ui/toast'
