@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,13 +8,51 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { PageHeader } from '@/components/shared'
 import { toast } from 'vue-sonner'
 import { Settings, Bell, Loader2 } from 'lucide-vue-next'
-import { usersService, organizationService } from '@/services/api'
+import { usersService, organizationService, organizationsService } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
+import { useOrganizationsStore } from '@/stores/organizations'
 
 const isSubmitting = ref(false)
 const isLoading = ref(true)
+const showDeleteDialog = ref(false)
+const isDeleting = ref(false)
+
+const authStore = useAuthStore()
+const organizationsStore = useOrganizationsStore()
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false)
+
+const oldestOrgId = computed(() => {
+  if (!organizationsStore.organizations.length) return null
+  let oldest = organizationsStore.organizations[0]
+  for (const org of organizationsStore.organizations) {
+    const orgDate = new Date(org.created_at)
+    const oldestDate = new Date(oldest.created_at)
+    if (orgDate < oldestDate) {
+      oldest = org
+    }
+  }
+  return oldest.id
+})
+
+const canDeleteOrg = computed(() => {
+  if (!isSuperAdmin.value) return false
+  if (!organizationsStore.selectedOrgId) return false
+  if (organizationsStore.organizations.length <= 1) return false
+  if (authStore.user?.organization_id && organizationsStore.selectedOrgId === authStore.user.organization_id) return false
+  if (oldestOrgId.value && organizationsStore.selectedOrgId === oldestOrgId.value) return false
+  return true
+})
 
 // General Settings
 const generalSettings = ref({
@@ -62,6 +100,14 @@ onMounted(async () => {
         campaign_updates: user.settings.campaign_updates ?? true
       }
     }
+
+    if (isSuperAdmin.value) {
+      organizationsStore.init()
+      await organizationsStore.fetchOrganizations()
+      if (!organizationsStore.selectedOrgId && authStore.user?.organization_id) {
+        organizationsStore.selectOrganization(authStore.user.organization_id)
+      }
+    }
   } catch (error) {
     console.error('Failed to load settings:', error)
   } finally {
@@ -101,6 +147,51 @@ async function saveNotificationSettings() {
     toast.error('Failed to save notification settings')
   } finally {
     isSubmitting.value = false
+  }
+}
+
+const openDeleteDialog = () => {
+  if (!canDeleteOrg.value) {
+    if (organizationsStore.organizations.length <= 1) {
+      toast.error('Cannot delete the last organization')
+    } else if (authStore.user?.organization_id && organizationsStore.selectedOrgId === authStore.user.organization_id) {
+      toast.error('Cannot delete your current organization')
+    } else if (oldestOrgId.value && organizationsStore.selectedOrgId === oldestOrgId.value) {
+      toast.error('Cannot delete the default organization')
+    } else {
+      toast.error('Organization cannot be deleted')
+    }
+    return
+  }
+  showDeleteDialog.value = true
+}
+
+const deleteOrganization = async () => {
+  const orgId = organizationsStore.selectedOrgId
+  if (!orgId) return
+
+  if (!canDeleteOrg.value) {
+    openDeleteDialog()
+    return
+  }
+
+  isDeleting.value = true
+  try {
+    await organizationsService.delete(orgId)
+    await organizationsStore.fetchOrganizations()
+    const nextOrg = organizationsStore.organizations[0]
+    if (nextOrg?.id) {
+      organizationsStore.selectOrganization(nextOrg.id)
+      window.location.reload()
+    } else {
+      organizationsStore.clearSelection()
+    }
+    showDeleteDialog.value = false
+    toast.success('Organization deleted')
+  } catch (error: any) {
+    toast.error(error.response?.data?.message || 'Failed to delete organization')
+  } finally {
+    isDeleting.value = false
   }
 }
 </script>
@@ -211,6 +302,25 @@ async function saveNotificationSettings() {
                     Save Changes
                   </Button>
                 </div>
+                <div v-if="isSuperAdmin" class="pt-2">
+                  <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                  <div class="mt-4 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <p class="font-medium text-red-300 light:text-red-700">Delete Organization</p>
+                    <p class="text-sm text-red-200/80 light:text-red-600">
+                          Permanently delete this organization and all its data. Your current and default organizations cannot be deleted.
+                    </p>
+                      </div>
+                      <Button variant="destructive" size="sm" @click="openDeleteDialog" :disabled="!canDeleteOrg || isDeleting">
+                        Delete
+                      </Button>
+                    </div>
+                    <p v-if="!canDeleteOrg" class="mt-3 text-xs text-red-200/70 light:text-red-600">
+                      Deletion is disabled for your current organization, the default organization, or when only one organization exists.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </TabsContent>
@@ -268,4 +378,28 @@ async function saveNotificationSettings() {
       </div>
     </ScrollArea>
   </div>
+
+  <Dialog v-model:open="showDeleteDialog">
+    <DialogContent class="sm:max-w-[420px]">
+      <DialogHeader>
+        <DialogTitle>Delete organization</DialogTitle>
+        <DialogDescription>
+          This will delete the selected organization and all of its data. This action cannot be undone.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+        You must have more than one organization. Your current and the default organization cannot be deleted.
+      </div>
+
+      <DialogFooter class="gap-2">
+        <Button variant="outline" @click="showDeleteDialog = false" :disabled="isDeleting">
+          Cancel
+        </Button>
+        <Button variant="destructive" @click="deleteOrganization" :disabled="isDeleting">
+          Delete
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
