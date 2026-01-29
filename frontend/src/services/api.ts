@@ -103,7 +103,13 @@ export const usersService = {
   changePassword: (data: { current_password: string; new_password: string }) =>
     api.put('/me/password', data),
   updateAvailability: (isAvailable: boolean) =>
-    api.put('/me/availability', { is_available: isAvailable })
+    api.put('/me/availability', { is_available: isAvailable }),
+  setupTwoFA: (currentPassword: string) =>
+    api.post('/me/2fa/setup', { current_password: currentPassword }),
+  verifyTwoFA: (code: string) =>
+    api.post('/me/2fa/verify', { code }),
+  disableTwoFA: (currentPassword: string, code: string) =>
+    api.post('/me/2fa/disable', { current_password: currentPassword, code })
 }
 
 export const apiKeysService = {

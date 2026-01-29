@@ -112,6 +112,9 @@ type User struct {
 	IsActive       bool       `gorm:"default:true" json:"is_active"`
 	IsAvailable    bool       `gorm:"default:true" json:"is_available"` // Agent availability status (away/available)
 	IsSuperAdmin   bool       `gorm:"default:false" json:"is_super_admin"`  // Super admin can access all organizations
+	TOTPSecret     string     `gorm:"type:text" json:"-"`                  // TOTP secret (base32)
+	TOTPEnabled    bool       `gorm:"default:false" json:"totp_enabled"`    // TOTP enabled for user
+	TOTPLastUsedAt *time.Time `json:"-"`
 
 	// SSO fields
 	SSOProvider   string `gorm:"size:50" json:"sso_provider,omitempty"`     // google, microsoft, github, facebook, custom

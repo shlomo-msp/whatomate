@@ -34,6 +34,7 @@ export interface User {
   settings?: UserSettings
   is_available?: boolean
   is_super_admin?: boolean
+  totp_enabled?: boolean
 }
 
 export interface AuthState {
@@ -112,9 +113,19 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(email: string, password: string): Promise<void> {
+  async function login(email: string, password: string): Promise<{ requires_2fa: boolean; two_fa_token?: string }> {
     const response = await api.post('/auth/login', { email, password })
     // fastglue wraps response in { status: "success", data: {...} }
+    const data = response.data.data
+    if (data?.requires_2fa) {
+      return { requires_2fa: true, two_fa_token: data.two_fa_token }
+    }
+    setAuth(data)
+    return { requires_2fa: false }
+  }
+
+  async function verifyTwoFA(twoFAToken: string, code: string): Promise<void> {
+    const response = await api.post('/auth/2fa/verify', { two_fa_token: twoFAToken, code })
     setAuth(response.data.data)
   }
 
@@ -230,6 +241,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshAccessToken,
     setAvailability,
     hasPermission,
-    hasAnyPermission
+    hasAnyPermission,
+    verifyTwoFA
   }
 })

@@ -30,6 +30,7 @@ type UserResponse struct {
 	IsActive       bool         `json:"is_active"`
 	IsAvailable    bool         `json:"is_available"`
 	IsSuperAdmin   bool         `json:"is_super_admin"`
+	TOTPEnabled    bool         `json:"totp_enabled"`
 	OrganizationID uuid.UUID    `json:"organization_id"`
 	Settings       models.JSONB `json:"settings,omitempty"`
 	CreatedAt      string       `json:"created_at"`
@@ -510,6 +511,7 @@ func userToResponse(user models.User) UserResponse {
 		IsActive:       user.IsActive,
 		IsAvailable:    user.IsAvailable,
 		IsSuperAdmin:   user.IsSuperAdmin,
+		TOTPEnabled:    user.TOTPEnabled,
 		OrganizationID: user.OrganizationID,
 		Settings:       user.Settings,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z"),

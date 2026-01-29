@@ -33,6 +33,8 @@ type AuthResponse struct {
 	RefreshToken string      `json:"refresh_token"`
 	ExpiresIn    int         `json:"expires_in"`
 	User         models.User `json:"user"`
+	RequiresTwoFA bool       `json:"requires_2fa,omitempty"`
+	TwoFAToken    string     `json:"two_fa_token,omitempty"`
 }
 
 // RefreshRequest represents token refresh request
@@ -81,6 +83,19 @@ func (a *App) Login(r *fastglue.Request) error {
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid credentials", nil, "")
+	}
+
+	if user.TOTPEnabled {
+		twoFAToken, err := a.generateTwoFAToken(&user)
+		if err != nil {
+			a.Log.Error("Failed to generate 2FA token", "error", err)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate token", nil, "")
+		}
+		return r.SendEnvelope(AuthResponse{
+			RequiresTwoFA: true,
+			TwoFAToken:    twoFAToken,
+			User:          user,
+		})
 	}
 
 	// Generate tokens

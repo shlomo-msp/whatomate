@@ -21,6 +21,9 @@ const authStore = useAuthStore()
 
 const email = ref('')
 const password = ref('')
+const twoFACode = ref('')
+const twoFARequired = ref(false)
+const twoFAToken = ref('')
 const isLoading = ref(false)
 const ssoProviders = ref<SSOProvider[]>([])
 
@@ -69,13 +72,44 @@ const handleLogin = async () => {
   isLoading.value = true
 
   try {
-    await authStore.login(email.value, password.value)
-    toast.success('Login successful')
+    const result = await authStore.login(email.value, password.value)
+    if (result.requires_2fa) {
+      twoFARequired.value = true
+      twoFAToken.value = result.two_fa_token || ''
+      toast.message('Two-factor authentication required')
+      return
+    }
 
+    toast.success('Login successful')
     const redirect = route.query.redirect as string
     router.push(redirect || '/')
   } catch (error: any) {
     const message = error.response?.data?.message || 'Invalid credentials'
+    toast.error(message)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleVerifyTwoFA = async () => {
+  if (!twoFACode.value.trim()) {
+    toast.error('Enter your verification code')
+    return
+  }
+  if (!twoFAToken.value) {
+    toast.error('Missing 2FA token. Please sign in again.')
+    twoFARequired.value = false
+    return
+  }
+
+  isLoading.value = true
+  try {
+    await authStore.verifyTwoFA(twoFAToken.value, twoFACode.value.trim())
+    toast.success('Login successful')
+    const redirect = route.query.redirect as string
+    router.push(redirect || '/')
+  } catch (error: any) {
+    const message = error.response?.data?.message || 'Invalid verification code'
     toast.error(message)
   } finally {
     isLoading.value = false
@@ -103,7 +137,7 @@ const initiateSSO = (provider: string) => {
         </p>
       </div>
 
-      <form @submit.prevent="handleLogin">
+      <form @submit.prevent="handleLogin" v-if="!twoFARequired">
         <div class="px-8 pb-4 space-y-4">
           <div class="space-y-2">
             <Label for="email" class="text-white/70 light:text-gray-700">Email</Label>
@@ -130,6 +164,27 @@ const initiateSSO = (provider: string) => {
           <Button type="submit" class="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-lg shadow-emerald-500/20" :disabled="isLoading">
             <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
             Sign in
+          </Button>
+        </div>
+      </form>
+
+      <form v-else @submit.prevent="handleVerifyTwoFA">
+        <div class="px-8 pb-4 space-y-4">
+          <div class="space-y-2">
+            <Label for="twofa" class="text-white/70 light:text-gray-700">Verification code</Label>
+            <Input
+              id="twofa"
+              v-model="twoFACode"
+              type="text"
+              placeholder="123456"
+              :disabled="isLoading"
+              autocomplete="one-time-code"
+            />
+            <p class="text-xs text-white/50 light:text-gray-500">Enter the 6-digit code from your authenticator app.</p>
+          </div>
+          <Button type="submit" class="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-lg shadow-emerald-500/20" :disabled="isLoading">
+            <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+            Verify & Sign in
           </Button>
         </div>
       </form>
