@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -48,12 +50,69 @@ func RequestLogger(log logf.Logger) fastglue.FastMiddleware {
 	}
 }
 
+// IsOriginAllowed checks if an origin is allowed by the configured allowlist.
+func IsOriginAllowed(origin string, allowed []string) bool {
+	if origin == "" || len(allowed) == 0 {
+		return false
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+
+	for _, raw := range allowed {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+		if pattern == "*" {
+			return true
+		}
+		if strings.EqualFold(pattern, origin) {
+			return true
+		}
+		if strings.Contains(pattern, "*") && matchOriginPattern(parsed, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchOriginPattern(origin *url.URL, pattern string) bool {
+	scheme := ""
+	hostPattern := pattern
+	if parts := strings.SplitN(pattern, "://", 2); len(parts) == 2 {
+		scheme = parts[0]
+		hostPattern = parts[1]
+	}
+	if scheme != "" && !strings.EqualFold(scheme, origin.Scheme) {
+		return false
+	}
+	if strings.Contains(hostPattern, "/") || hostPattern == "" {
+		return false
+	}
+
+	host := origin.Host
+	if ok, _ := path.Match(hostPattern, host); ok {
+		return true
+	}
+	if strings.Contains(host, ":") && !strings.Contains(hostPattern, ":") {
+		hostOnly := strings.Split(host, ":")[0]
+		if ok, _ := path.Match(hostPattern, hostOnly); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // CORS handles Cross-Origin Resource Sharing
-func CORS() fastglue.FastMiddleware {
+func CORS(allowedOrigins []string) fastglue.FastMiddleware {
 	return func(r *fastglue.Request) *fastglue.Request {
 		origin := string(r.RequestCtx.Request.Header.Peek("Origin"))
-		if origin == "" {
-			origin = "*"
+		if !IsOriginAllowed(origin, allowedOrigins) {
+			return r
 		}
 
 		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Origin", origin)
@@ -61,6 +120,7 @@ func CORS() fastglue.FastMiddleware {
 		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Requested-With")
 		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
 		r.RequestCtx.Response.Header.Set("Access-Control-Max-Age", "86400")
+		r.RequestCtx.Response.Header.Set("Vary", "Origin")
 
 		return r
 	}

@@ -13,6 +13,7 @@ import (
 type Config struct {
 	App           AppConfig           `koanf:"app"`
 	Server        ServerConfig        `koanf:"server"`
+	CORS          CORSConfig          `koanf:"cors"`
 	Database      DatabaseConfig      `koanf:"database"`
 	Redis         RedisConfig         `koanf:"redis"`
 	JWT           JWTConfig           `koanf:"jwt"`
@@ -34,6 +35,10 @@ type ServerConfig struct {
 	ReadTimeout  int    `koanf:"read_timeout"`
 	WriteTimeout int    `koanf:"write_timeout"`
 	BasePath     string `koanf:"base_path"` // Base path for frontend (e.g., "/whatomate" for proxy pass)
+}
+
+type CORSConfig struct {
+	AllowedOrigins []string `koanf:"allowed_origins"`
 }
 
 type DatabaseConfig struct {

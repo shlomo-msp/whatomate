@@ -194,7 +194,7 @@ func runServer(args []string) {
 
 	// Create server with CORS wrapper
 	server := &fasthttp.Server{
-		Handler:      corsWrapper(g.Handler()),
+		Handler:      corsWrapper(g.Handler(), cfg.CORS.AllowedOrigins),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		Name:         "Whatomate",
@@ -703,21 +703,25 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 // corsWrapper wraps a handler with CORS support at the fasthttp level
 // This ensures CORS headers are set even for auto-handled OPTIONS requests
-func corsWrapper(next fasthttp.RequestHandler) fasthttp.RequestHandler {
+func corsWrapper(next fasthttp.RequestHandler, allowedOrigins []string) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		origin := string(ctx.Request.Header.Peek("Origin"))
-		if origin == "" {
-			origin = "*"
+		allowed := middleware.IsOriginAllowed(origin, allowedOrigins)
+		if allowed {
+			ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
+			ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+			ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Requested-With, X-Organization-ID")
+			ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
+			ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
+			ctx.Response.Header.Set("Vary", "Origin")
 		}
-
-		ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
-		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Requested-With, X-Organization-ID")
-		ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
-		ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
 
 		// Handle preflight OPTIONS requests
 		if string(ctx.Method()) == "OPTIONS" {
+			if !allowed {
+				ctx.SetStatusCode(fasthttp.StatusForbidden)
+				return
+			}
 			ctx.SetStatusCode(fasthttp.StatusNoContent)
 			return
 		}

@@ -16,6 +16,11 @@ read_timeout = 30
 write_timeout = 30
 base_path = ""  # Set to "/subpath" if behind nginx proxy pass
 
+[cors]
+# List of allowed origins. Example:
+# allowed_origins = ["https://app.example.com", "https://*.example.com", "http://localhost:5173"]
+allowed_origins = []
+
 [database]
 host = "db"  # Use "localhost" for local development
 port = 5432

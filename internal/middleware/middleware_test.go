@@ -49,22 +49,32 @@ func TestCORS(t *testing.T) {
 	tests := []struct {
 		name         string
 		origin       string
+		allowlist    []string
 		wantOrigin   string
 	}{
 		{
 			name:       "with origin header",
 			origin:     "https://example.com",
+			allowlist:  []string{"https://example.com"},
 			wantOrigin: "https://example.com",
 		},
 		{
 			name:       "without origin header",
 			origin:     "",
-			wantOrigin: "*",
+			allowlist:  []string{"https://example.com"},
+			wantOrigin: "",
 		},
 		{
 			name:       "localhost origin",
 			origin:     "http://localhost:3000",
+			allowlist:  []string{"http://localhost:3000"},
 			wantOrigin: "http://localhost:3000",
+		},
+		{
+			name:       "disallowed origin",
+			origin:     "https://evil.example.com",
+			allowlist:  []string{"https://example.com"},
+			wantOrigin: "",
 		},
 	}
 
@@ -77,18 +87,21 @@ func TestCORS(t *testing.T) {
 				req.RequestCtx.Request.Header.Set("Origin", tt.origin)
 			}
 
-			corsMiddleware := middleware.CORS()
+			corsMiddleware := middleware.CORS(tt.allowlist)
 			result := corsMiddleware(req)
 
 			require.NotNil(t, result, "CORS middleware should return request")
 
 			// Check CORS headers
-			assert.Equal(t, tt.wantOrigin, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Origin")))
-			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "GET")
-			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "POST")
-			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "Authorization")
-			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "X-API-Key")
-			assert.Equal(t, "true", string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Credentials")))
+			gotOrigin := string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Origin"))
+			assert.Equal(t, tt.wantOrigin, gotOrigin)
+			if tt.wantOrigin != "" {
+				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "GET")
+				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "POST")
+				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "Authorization")
+				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "X-API-Key")
+				assert.Equal(t, "true", string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Credentials")))
+			}
 		})
 	}
 }
@@ -523,7 +536,7 @@ func TestAuth_MultipleMiddlewareChain(t *testing.T) {
 	req.RequestCtx.Request.Header.Set("Origin", "https://example.com")
 
 	// Apply CORS first
-	corsMiddleware := middleware.CORS()
+	corsMiddleware := middleware.CORS([]string{"https://example.com"})
 	req = corsMiddleware(req)
 	require.NotNil(t, req)
 
