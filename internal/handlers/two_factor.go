@@ -249,6 +249,28 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 		a.Log.Error("Failed to update TOTP last used time", "error", err)
 	}
 
+	// Reload user to reflect updated TOTP state for the response
+	if err := a.DB.Preload("Role").Where("id = ?", user.ID).First(&user).Error; err == nil {
+		if user.Role != nil && user.RoleID != nil {
+			cachedPerms, err := a.GetRolePermissionsCached(*user.RoleID)
+			if err == nil {
+				permissions := make([]models.Permission, 0, len(cachedPerms))
+				for _, p := range cachedPerms {
+					for i := len(p) - 1; i >= 0; i-- {
+						if p[i] == ':' {
+							permissions = append(permissions, models.Permission{
+								Resource: p[:i],
+								Action:   p[i+1:],
+							})
+							break
+						}
+					}
+				}
+				user.Role.Permissions = permissions
+			}
+		}
+	}
+
 	accessToken, err := a.generateAccessToken(&user)
 	if err != nil {
 		a.Log.Error("Failed to generate access token", "error", err)

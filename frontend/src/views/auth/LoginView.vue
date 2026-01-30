@@ -253,7 +253,8 @@ const initiateSSO = (provider: string) => {
     </div>
 
     <Dialog v-model:open="twoFADialogOpen">
-      <DialogContent class="sm:max-w-[420px]">
+    <DialogContent class="sm:max-w-[420px]">
+      <form @submit.prevent="handleVerifyTwoFA" class="space-y-4">
         <DialogHeader>
           <DialogTitle>Two-Factor Authentication</DialogTitle>
           <DialogDescription>
@@ -273,16 +274,18 @@ const initiateSSO = (provider: string) => {
         </div>
         <DialogFooter>
           <Button variant="outline" @click="twoFADialogOpen = false" :disabled="isLoading">Cancel</Button>
-          <Button @click="handleVerifyTwoFA" :disabled="isLoading">
+          <Button type="submit" :disabled="isLoading">
             <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
             Verify
           </Button>
         </DialogFooter>
-      </DialogContent>
+      </form>
+    </DialogContent>
     </Dialog>
 
     <Dialog v-model:open="twoFASetupDialogOpen">
-      <DialogContent class="sm:max-w-[480px]">
+    <DialogContent class="sm:max-w-[480px]">
+      <form @submit.prevent="handleVerifyTwoFASetup" class="space-y-4">
         <DialogHeader>
           <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
           <DialogDescription>
@@ -311,12 +314,13 @@ const initiateSSO = (provider: string) => {
         </div>
         <DialogFooter>
           <Button variant="outline" @click="twoFASetupDialogOpen = false" :disabled="isLoading">Cancel</Button>
-          <Button @click="handleVerifyTwoFASetup" :disabled="isLoading">
+          <Button type="submit" :disabled="isLoading">
             <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
             Verify & Continue
           </Button>
         </DialogFooter>
-      </DialogContent>
+      </form>
+    </DialogContent>
     </Dialog>
   </div>
 </template>

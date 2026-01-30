@@ -284,17 +284,6 @@ const deleteOrganization = async () => {
                     @update:checked="generalSettings.auto_delete_media_enabled = $event"
                   />
                 </div>
-                <Separator class="bg-white/[0.08] light:bg-gray-200" />
-                <div class="flex items-center justify-between">
-                  <div>
-                    <p class="font-medium text-white light:text-gray-900">Require 2FA</p>
-                    <p class="text-sm text-white/40 light:text-gray-500">Force users to set up two-factor authentication</p>
-                  </div>
-                  <Switch
-                    :checked="generalSettings.require_2fa"
-                    @update:checked="generalSettings.require_2fa = $event"
-                  />
-                </div>
                 <div class="grid grid-cols-2 gap-4">
                   <div class="space-y-2">
                     <Label for="media_cleanup_days" class="text-white/70 light:text-gray-700">Delete After</Label>
@@ -309,6 +298,17 @@ const deleteOrganization = async () => {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">Require 2FA</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">Force users to set up two-factor authentication</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.require_2fa"
+                    @update:checked="generalSettings.require_2fa = $event"
+                  />
                 </div>
                 <div class="flex justify-end">
                   <Button variant="outline" size="sm" class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50" @click="saveGeneralSettings" :disabled="isSubmitting">

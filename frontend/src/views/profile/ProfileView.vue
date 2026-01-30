@@ -326,103 +326,109 @@ async function verifyResetTwoFA() {
 
   <Dialog v-model:open="setupDialogOpen">
     <DialogContent class="sm:max-w-[480px]">
-      <DialogHeader>
-        <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
-        <DialogDescription>Scan the QR code and enter the verification code.</DialogDescription>
-      </DialogHeader>
-      <div class="space-y-3">
-        <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
-          <img :src="twoFASetup.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
-          <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+      <form @submit.prevent="verifyTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Scan the QR code and enter the verification code.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3">
+          <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
+            <img :src="twoFASetup.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
+            <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+          </div>
+          <div class="space-y-1">
+            <Label>Manual entry key</Label>
+            <Input :model-value="twoFASetup.secret" readonly />
+          </div>
+          <div class="space-y-1">
+            <Label for="twofa_code">Verification Code</Label>
+            <Input id="twofa_code" v-model="twoFASetup.code" type="text" placeholder="123456" autocomplete="one-time-code" />
+          </div>
         </div>
-        <div class="space-y-1">
-          <Label>Manual entry key</Label>
-          <Input :model-value="twoFASetup.secret" readonly />
-        </div>
-        <div class="space-y-1">
-          <Label for="twofa_code">Verification Code</Label>
-          <Input id="twofa_code" v-model="twoFASetup.code" type="text" placeholder="123456" autocomplete="one-time-code" />
-        </div>
-      </div>
-      <DialogFooter>
-        <Button variant="outline" @click="setupDialogOpen = false">Cancel</Button>
-        <Button variant="outline" @click="verifyTwoFA" :disabled="isVerifyingTwoFA">
-          <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
-          Enable 2FA
-        </Button>
-      </DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" @click="setupDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isVerifyingTwoFA">
+            <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Enable 2FA
+          </Button>
+        </DialogFooter>
+      </form>
     </DialogContent>
   </Dialog>
 
   <Dialog v-model:open="resetDialogOpen">
     <DialogContent class="sm:max-w-[480px]">
-      <DialogHeader>
-        <DialogTitle>Reset Two-Factor Authentication</DialogTitle>
-        <DialogDescription>Verify your password, then scan the new QR code.</DialogDescription>
-      </DialogHeader>
-      <div class="space-y-3">
-        <div class="space-y-2">
-          <Label for="reset_password">Current Password</Label>
-          <div class="relative">
-            <Input id="reset_password" v-model="twoFAReset.current_password" :type="showResetPassword ? 'text' : 'password'" placeholder="Enter current password" />
-            <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showResetPassword = !showResetPassword">
-              <Eye v-if="!showResetPassword" class="h-4 w-4" />
-              <EyeOff v-else class="h-4 w-4" />
-            </button>
+      <form @submit.prevent="verifyResetTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Reset Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Verify your password, then scan the new QR code.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3">
+          <div class="space-y-2">
+            <Label for="reset_password">Current Password</Label>
+            <div class="relative">
+              <Input id="reset_password" v-model="twoFAReset.current_password" :type="showResetPassword ? 'text' : 'password'" placeholder="Enter current password" />
+              <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showResetPassword = !showResetPassword">
+                <Eye v-if="!showResetPassword" class="h-4 w-4" />
+                <EyeOff v-else class="h-4 w-4" />
+              </button>
+            </div>
+            <Button variant="outline" size="sm" @click="resetTwoFA" :disabled="isResettingTwoFA">
+              <Loader2 v-if="isResettingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+              Generate New QR Code
+            </Button>
           </div>
-          <Button variant="outline" size="sm" @click="resetTwoFA" :disabled="isResettingTwoFA">
-            <Loader2 v-if="isResettingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
-            Generate New QR Code
+          <div v-if="twoFAReset.qr_code" class="space-y-2">
+            <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
+              <img :src="twoFAReset.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
+              <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+            </div>
+            <div class="space-y-1">
+              <Label>Manual entry key</Label>
+              <Input :model-value="twoFAReset.secret" readonly />
+            </div>
+            <div class="space-y-1">
+              <Label for="reset_code">Verification Code</Label>
+              <Input id="reset_code" v-model="twoFAReset.code" type="text" placeholder="123456" autocomplete="one-time-code" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="resetDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isVerifyingTwoFA || !twoFAReset.qr_code">
+            <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Verify & Save
           </Button>
-        </div>
-        <div v-if="twoFAReset.qr_code" class="space-y-2">
-          <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
-            <img :src="twoFAReset.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
-            <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
-          </div>
-          <div class="space-y-1">
-            <Label>Manual entry key</Label>
-            <Input :model-value="twoFAReset.secret" readonly />
-          </div>
-          <div class="space-y-1">
-            <Label for="reset_code">Verification Code</Label>
-            <Input id="reset_code" v-model="twoFAReset.code" type="text" placeholder="123456" autocomplete="one-time-code" />
-          </div>
-        </div>
-      </div>
-      <DialogFooter>
-        <Button variant="outline" @click="resetDialogOpen = false">Cancel</Button>
-        <Button variant="outline" @click="verifyResetTwoFA" :disabled="isVerifyingTwoFA || !twoFAReset.qr_code">
-          <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
-          Verify & Save
-        </Button>
-      </DialogFooter>
+        </DialogFooter>
+      </form>
     </DialogContent>
   </Dialog>
 
   <Dialog v-model:open="disableDialogOpen">
     <DialogContent class="sm:max-w-[420px]">
-      <DialogHeader>
-        <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
-        <DialogDescription>Enter your password to disable 2FA.</DialogDescription>
-      </DialogHeader>
-      <div class="space-y-2">
-        <Label for="disable_password">Current Password</Label>
-        <div class="relative">
-          <Input id="disable_password" v-model="twoFADisable.current_password" :type="showDisablePassword ? 'text' : 'password'" placeholder="Enter current password" />
-          <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showDisablePassword = !showDisablePassword">
-            <Eye v-if="!showDisablePassword" class="h-4 w-4" />
-            <EyeOff v-else class="h-4 w-4" />
-          </button>
+      <form @submit.prevent="disableTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Enter your password to disable 2FA.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2">
+          <Label for="disable_password">Current Password</Label>
+          <div class="relative">
+            <Input id="disable_password" v-model="twoFADisable.current_password" :type="showDisablePassword ? 'text' : 'password'" placeholder="Enter current password" />
+            <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showDisablePassword = !showDisablePassword">
+              <Eye v-if="!showDisablePassword" class="h-4 w-4" />
+              <EyeOff v-else class="h-4 w-4" />
+            </button>
+          </div>
         </div>
-      </div>
-      <DialogFooter>
-        <Button variant="outline" @click="disableDialogOpen = false">Cancel</Button>
-        <Button variant="outline" @click="disableTwoFA" :disabled="isDisablingTwoFA">
-          <Loader2 v-if="isDisablingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
-          Disable 2FA
-        </Button>
-      </DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" @click="disableDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isDisablingTwoFA">
+            <Loader2 v-if="isDisablingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Disable 2FA
+          </Button>
+        </DialogFooter>
+      </form>
     </DialogContent>
   </Dialog>
 </template>
