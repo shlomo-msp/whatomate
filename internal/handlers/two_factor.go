@@ -245,7 +245,7 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 	if claims.Purpose == twoFASetupPurpose && !user.TOTPEnabled {
 		updates["totp_enabled"] = true
 	}
-	if err := a.DB.Model(&user).Updates(updates).Error; err != nil {
+	if err := a.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
 		a.Log.Error("Failed to update TOTP last used time", "error", err)
 	}
 
