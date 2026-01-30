@@ -21,16 +21,13 @@ const (
 	totpStepSeconds   = 30
 	twoFATokenExpiry  = 5 * time.Minute
 	twoFATokenPurpose = "two_fa_login"
+	twoFASetupPurpose = "two_fa_setup"
 )
 
 type TwoFAClaims struct {
 	UserID  uuid.UUID `json:"user_id"`
 	Purpose string    `json:"purpose"`
 	jwt.RegisteredClaims
-}
-
-type TOTPSetupRequest struct {
-	CurrentPassword string `json:"current_password" validate:"required"`
 }
 
 type TOTPSetupResponse struct {
@@ -45,7 +42,10 @@ type TOTPVerifyRequest struct {
 
 type TOTPDisableRequest struct {
 	CurrentPassword string `json:"current_password" validate:"required"`
-	Code            string `json:"code" validate:"required"`
+}
+
+type TOTPResetRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
 }
 
 type TwoFAVerifyRequest struct {
@@ -60,58 +60,16 @@ func (a *App) SetupTOTP(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	var req TOTPSetupRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
-	}
-
 	var user models.User
 	if err := a.DB.Where("id = ?", userID).First(&user).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "User not found", nil, "")
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid password", nil, "")
 	}
 
 	if user.TOTPEnabled {
 		return r.SendErrorEnvelope(fasthttp.StatusConflict, "Two-factor authentication is already enabled", nil, "")
 	}
 
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Whatomate",
-		AccountName: user.Email,
-	})
-	if err != nil {
-		a.Log.Error("Failed to generate TOTP key", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate TOTP secret", nil, "")
-	}
-
-	secret := key.Secret()
-	otpauthURL := key.URL()
-
-	if err := a.DB.Model(&user).Updates(map[string]any{
-		"totp_secret":       secret,
-		"totp_enabled":      false,
-		"totp_last_used_at": nil,
-	}).Error; err != nil {
-		a.Log.Error("Failed to store TOTP secret", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to store TOTP secret", nil, "")
-	}
-
-	png, err := qrcode.Encode(otpauthURL, qrcode.Medium, 256)
-	if err != nil {
-		a.Log.Error("Failed to generate TOTP QR code", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate QR code", nil, "")
-	}
-
-	qrDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-
-	return r.SendEnvelope(TOTPSetupResponse{
-		Secret:    secret,
-		OTPAuth:   otpauthURL,
-		QRCodePNG: qrDataURL,
-	})
+	return a.generateAndStoreTOTPSecret(r, &user)
 }
 
 // VerifyTOTP enables TOTP for the current user after code verification.
@@ -178,10 +136,6 @@ func (a *App) DisableTOTP(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid password", nil, "")
 	}
 
-	if ok, _ := validateTOTPCode(user.TOTPSecret, req.Code, time.Now().UTC(), user.TOTPLastUsedAt); !ok {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid verification code", nil, "")
-	}
-
 	if err := a.DB.Model(&user).Updates(map[string]any{
 		"totp_secret":       "",
 		"totp_enabled":      false,
@@ -195,6 +149,34 @@ func (a *App) DisableTOTP(r *fastglue.Request) error {
 		"message":      "Two-factor authentication disabled",
 		"totp_enabled": false,
 	})
+}
+
+// ResetTOTP rotates the TOTP secret after password verification.
+func (a *App) ResetTOTP(r *fastglue.Request) error {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var req TOTPResetRequest
+	if err := r.Decode(&req, "json"); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	var user models.User
+	if err := a.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "User not found", nil, "")
+	}
+
+	if !user.TOTPEnabled || user.TOTPSecret == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Two-factor authentication is not enabled", nil, "")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid password", nil, "")
+	}
+
+	return a.generateAndStoreTOTPSecret(r, &user)
 }
 
 // VerifyTwoFALogin exchanges a valid TOTP code for full auth tokens.
@@ -212,7 +194,7 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 	}
 
 	claims, ok := token.Claims.(*TwoFAClaims)
-	if !ok || claims.Purpose != twoFATokenPurpose {
+	if !ok || (claims.Purpose != twoFATokenPurpose && claims.Purpose != twoFASetupPurpose) {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid 2FA token", nil, "")
 	}
 
@@ -245,7 +227,10 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Account is disabled", nil, "")
 	}
 
-	if !user.TOTPEnabled || user.TOTPSecret == "" {
+	if user.TOTPSecret == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Two-factor authentication is not setup", nil, "")
+	}
+	if claims.Purpose == twoFATokenPurpose && !user.TOTPEnabled {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Two-factor authentication is not enabled", nil, "")
 	}
 
@@ -254,7 +239,13 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid verification code", nil, "")
 	}
 
-	if err := a.DB.Model(&user).Update("totp_last_used_at", usedAt).Error; err != nil {
+	updates := map[string]any{
+		"totp_last_used_at": usedAt,
+	}
+	if claims.Purpose == twoFASetupPurpose && !user.TOTPEnabled {
+		updates["totp_enabled"] = true
+	}
+	if err := a.DB.Model(&user).Updates(updates).Error; err != nil {
 		a.Log.Error("Failed to update TOTP last used time", "error", err)
 	}
 
@@ -291,6 +282,91 @@ func (a *App) generateTwoFAToken(user *models.User) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(a.Config.JWT.Secret))
+}
+
+func (a *App) generateTwoFASetupToken(user *models.User) (string, error) {
+	claims := TwoFAClaims{
+		UserID:  user.ID,
+		Purpose: twoFASetupPurpose,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(twoFATokenExpiry)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "whatomate",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(a.Config.JWT.Secret))
+}
+
+// SetupTOTPWithToken initializes a TOTP secret for a user after password login.
+func (a *App) SetupTOTPWithToken(r *fastglue.Request) error {
+	var req struct {
+		TwoFAToken string `json:"two_fa_token" validate:"required"`
+	}
+	if err := r.Decode(&req, "json"); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	token, err := jwt.ParseWithClaims(req.TwoFAToken, &TwoFAClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(a.Config.JWT.Secret), nil
+	})
+	if err != nil || !token.Valid {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid or expired 2FA token", nil, "")
+	}
+
+	claims, ok := token.Claims.(*TwoFAClaims)
+	if !ok || claims.Purpose != twoFASetupPurpose {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid 2FA token", nil, "")
+	}
+
+	var user models.User
+	if err := a.DB.Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "User not found", nil, "")
+	}
+
+	if user.TOTPEnabled {
+		return r.SendErrorEnvelope(fasthttp.StatusConflict, "Two-factor authentication is already enabled", nil, "")
+	}
+
+	return a.generateAndStoreTOTPSecret(r, &user)
+}
+
+func (a *App) generateAndStoreTOTPSecret(r *fastglue.Request, user *models.User) error {
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "Whatomate",
+		AccountName: user.Email,
+	})
+	if err != nil {
+		a.Log.Error("Failed to generate TOTP key", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate TOTP secret", nil, "")
+	}
+
+	secret := key.Secret()
+	otpauthURL := key.URL()
+
+	if err := a.DB.Model(user).Updates(map[string]any{
+		"totp_secret":       secret,
+		"totp_enabled":      false,
+		"totp_last_used_at": nil,
+	}).Error; err != nil {
+		a.Log.Error("Failed to store TOTP secret", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to store TOTP secret", nil, "")
+	}
+
+	png, err := qrcode.Encode(otpauthURL, qrcode.Medium, 256)
+	if err != nil {
+		a.Log.Error("Failed to generate TOTP QR code", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate QR code", nil, "")
+	}
+
+	qrDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+
+	return r.SendEnvelope(TOTPSetupResponse{
+		Secret:    secret,
+		OTPAuth:   otpauthURL,
+		QRCodePNG: qrDataURL,
+	})
 }
 
 func validateTOTPCode(secret, code string, now time.Time, lastUsedAt *time.Time) (bool, time.Time) {

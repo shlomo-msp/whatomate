@@ -17,6 +17,7 @@ export interface User {
   role?: UserRole
   is_active: boolean
   is_super_admin?: boolean
+  totp_required?: boolean
   organization_id: string
   created_at: string
   updated_at: string
@@ -28,6 +29,7 @@ export interface CreateUserData {
   full_name: string
   role_id?: string
   is_super_admin?: boolean
+  totp_required?: boolean
 }
 
 export interface UpdateUserData {
@@ -37,6 +39,7 @@ export interface UpdateUserData {
   role_id?: string
   is_active?: boolean
   is_super_admin?: boolean
+  totp_required?: boolean
 }
 
 export const useUsersStore = defineStore('users', () => {

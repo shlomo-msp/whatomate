@@ -413,6 +413,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/auth/login", app.Login)
 	g.POST("/api/auth/register", app.Register)
 	g.POST("/api/auth/refresh", app.RefreshToken)
+	g.POST("/api/auth/2fa/setup", app.SetupTOTPWithToken)
 	g.POST("/api/auth/2fa/verify", app.VerifyTwoFALogin)
 
 	// SSO routes (public)
@@ -437,7 +438,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		path := string(r.RequestCtx.Path())
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
-			path == "/api/auth/login" || path == "/api/auth/refresh" || path == "/api/auth/2fa/verify" ||
+			path == "/api/auth/login" || path == "/api/auth/refresh" || path == "/api/auth/2fa/verify" || path == "/api/auth/2fa/setup" ||
 			path == "/api/webhook" || path == "/ws" {
 			return r
 		}
@@ -478,6 +479,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/me/2fa/setup", app.SetupTOTP)
 	g.POST("/api/me/2fa/verify", app.VerifyTOTP)
 	g.POST("/api/me/2fa/disable", app.DisableTOTP)
+	g.POST("/api/me/2fa/reset", app.ResetTOTP)
 
 	// User Management (admin only - enforced by middleware)
 	g.GET("/api/users", app.ListUsers)

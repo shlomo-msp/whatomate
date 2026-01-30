@@ -35,9 +35,10 @@ interface UserFormData {
   role_id: string
   is_active: boolean
   is_super_admin: boolean
+  totp_required: boolean
 }
 
-const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false }
+const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false, totp_required: false }
 
 const {
   isLoading, isSubmitting, isDialogOpen, editingItem: editingUser, deleteDialogOpen, itemToDelete: userToDelete,
@@ -64,7 +65,7 @@ const getDefaultRoleId = () => rolesStore.roles.find(r => r.name === 'agent' && 
 
 function openCreateDialog() { formData.value.role_id = getDefaultRoleId(); baseOpenCreateDialog() }
 function openEditDialog(user: User) {
-  baseOpenEditDialog(user, (u) => ({ email: u.email, password: '', full_name: u.full_name, role_id: u.role_id || '', is_active: u.is_active, is_super_admin: u.is_super_admin || false }))
+  baseOpenEditDialog(user, (u) => ({ email: u.email, password: '', full_name: u.full_name, role_id: u.role_id || '', is_active: u.is_active, is_super_admin: u.is_super_admin || false, totp_required: !!u.totp_required }))
 }
 
 watch(() => organizationsStore.selectedOrgId, () => fetchData())
@@ -87,12 +88,14 @@ async function saveUser() {
     const data: Record<string, unknown> = { email: formData.value.email, full_name: formData.value.full_name, role_id: formData.value.role_id }
     if (editingUser.value) {
       data.is_active = formData.value.is_active
+      data.totp_required = formData.value.totp_required
       if (formData.value.password) data.password = formData.value.password
       if (isSuperAdmin.value) data.is_super_admin = formData.value.is_super_admin
       await usersStore.updateUser(editingUser.value.id, data)
       toast.success('User updated')
     } else {
       data.password = formData.value.password
+      data.totp_required = formData.value.totp_required
       if (isSuperAdmin.value && formData.value.is_super_admin) data.is_super_admin = true
       await usersStore.createUser(data)
       toast.success('User created')
@@ -185,6 +188,13 @@ function getRoleName(user: User) { return user.role?.name || 'No role' }
           <Select v-model="formData.role_id"><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger><SelectContent><SelectItem v-for="role in rolesStore.roles" :key="role.id" :value="role.id"><div class="flex items-center gap-2"><span class="capitalize">{{ role.name }}</span><Badge v-if="role.is_system" variant="secondary" class="text-xs">System</Badge></div></SelectItem></SelectContent></Select>
         </div>
         <div v-if="editingUser" class="flex items-center justify-between"><Label for="is_active" class="font-normal cursor-pointer">Account Active</Label><Switch id="is_active" :checked="formData.is_active" @update:checked="formData.is_active = $event" :disabled="editingUser?.id === currentUserId" /></div>
+        <div class="flex items-center justify-between border-t pt-4">
+          <div>
+            <Label for="totp_required" class="font-normal cursor-pointer">Require 2FA</Label>
+            <p class="text-xs text-muted-foreground">User must set up 2FA on next login</p>
+          </div>
+          <Switch id="totp_required" :checked="formData.totp_required" @update:checked="formData.totp_required = $event" />
+        </div>
         <div v-if="isSuperAdmin" class="flex items-center justify-between border-t pt-4"><div><Label for="is_super_admin" class="font-normal cursor-pointer">Super Admin</Label><p class="text-xs text-muted-foreground">Super admins can access all organizations</p></div><Switch id="is_super_admin" :checked="formData.is_super_admin" @update:checked="formData.is_super_admin = $event" :disabled="editingUser?.id === currentUserId && editingUser?.is_super_admin" /></div>
       </div>
     </CrudFormDialog>

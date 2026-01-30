@@ -61,7 +61,8 @@ const generalSettings = ref({
   date_format: 'YYYY-MM-DD',
   mask_phone_numbers: false,
   auto_delete_media_enabled: false,
-  auto_delete_media_days: '30'
+  auto_delete_media_days: '30',
+  require_2fa: false
 })
 
 // Notification Settings
@@ -87,7 +88,8 @@ onMounted(async () => {
         date_format: orgData.settings?.date_format || 'YYYY-MM-DD',
         mask_phone_numbers: orgData.settings?.mask_phone_numbers || false,
         auto_delete_media_enabled: orgData.settings?.auto_delete_media_enabled || false,
-        auto_delete_media_days: String(orgData.settings?.auto_delete_media_days || 30)
+        auto_delete_media_days: String(orgData.settings?.auto_delete_media_days || 30),
+        require_2fa: orgData.settings?.require_2fa || false
       }
     }
 
@@ -124,7 +126,8 @@ async function saveGeneralSettings() {
       date_format: generalSettings.value.date_format,
       mask_phone_numbers: generalSettings.value.mask_phone_numbers,
       auto_delete_media_enabled: generalSettings.value.auto_delete_media_enabled,
-      auto_delete_media_days: Number(generalSettings.value.auto_delete_media_days)
+      auto_delete_media_days: Number(generalSettings.value.auto_delete_media_days),
+      require_2fa: generalSettings.value.require_2fa
     })
     toast.success('General settings saved')
   } catch (error) {
@@ -279,6 +282,17 @@ const deleteOrganization = async () => {
                   <Switch
                     :checked="generalSettings.auto_delete_media_enabled"
                     @update:checked="generalSettings.auto_delete_media_enabled = $event"
+                  />
+                </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">Require 2FA</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">Force users to set up two-factor authentication</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.require_2fa"
+                    @update:checked="generalSettings.require_2fa = $event"
                   />
                 </div>
                 <div class="grid grid-cols-2 gap-4">

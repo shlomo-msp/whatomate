@@ -115,6 +115,7 @@ type User struct {
 	TOTPSecret     string     `gorm:"type:text" json:"-"`                  // TOTP secret (base32)
 	TOTPEnabled    bool       `gorm:"default:false" json:"totp_enabled"`    // TOTP enabled for user
 	TOTPLastUsedAt *time.Time `json:"-"`
+	TOTPRequired   bool       `gorm:"default:false" json:"totp_required"`   // TOTP required for user
 
 	// SSO fields
 	SSOProvider   string `gorm:"size:50" json:"sso_provider,omitempty"`     // google, microsoft, github, facebook, custom

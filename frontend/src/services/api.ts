@@ -94,7 +94,7 @@ export const usersService = {
   get: (id: string) => api.get(`/users/${id}`),
   create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
     api.post('/users', data),
-  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
+  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean; totp_required?: boolean }) =>
     api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   me: () => api.get('/me'),
@@ -104,12 +104,14 @@ export const usersService = {
     api.put('/me/password', data),
   updateAvailability: (isAvailable: boolean) =>
     api.put('/me/availability', { is_available: isAvailable }),
-  setupTwoFA: (currentPassword: string) =>
-    api.post('/me/2fa/setup', { current_password: currentPassword }),
+  setupTwoFA: () =>
+    api.post('/me/2fa/setup'),
   verifyTwoFA: (code: string) =>
     api.post('/me/2fa/verify', { code }),
-  disableTwoFA: (currentPassword: string, code: string) =>
-    api.post('/me/2fa/disable', { current_password: currentPassword, code })
+  disableTwoFA: (currentPassword: string) =>
+    api.post('/me/2fa/disable', { current_password: currentPassword }),
+  resetTwoFA: (currentPassword: string) =>
+    api.post('/me/2fa/reset', { current_password: currentPassword })
 }
 
 export const apiKeysService = {
@@ -440,6 +442,7 @@ export const organizationService = {
     date_format?: string
     auto_delete_media_enabled?: boolean
     auto_delete_media_days?: number
+    require_2fa?: boolean
     name?: string
   }) => api.put('/org/settings', data)
 }

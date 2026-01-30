@@ -17,6 +17,7 @@ type OrganizationSettings struct {
 	DateFormat             string `json:"date_format"`
 	AutoDeleteMediaEnabled bool `json:"auto_delete_media_enabled"`
 	AutoDeleteMediaDays    int  `json:"auto_delete_media_days"`
+	RequireTwoFA           bool `json:"require_2fa"`
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -38,6 +39,7 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		DateFormat:             "YYYY-MM-DD",
 		AutoDeleteMediaEnabled: false,
 		AutoDeleteMediaDays:    30,
+		RequireTwoFA:           false,
 	}
 
 	if org.Settings != nil {
@@ -55,6 +57,9 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		}
 		if v, ok := org.Settings["auto_delete_media_days"].(float64); ok && v > 0 {
 			settings.AutoDeleteMediaDays = int(v)
+		}
+		if v, ok := org.Settings["require_2fa"].(bool); ok {
+			settings.RequireTwoFA = v
 		}
 	}
 
@@ -77,6 +82,7 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 		DateFormat             *string `json:"date_format"`
 		AutoDeleteMediaEnabled *bool   `json:"auto_delete_media_enabled"`
 		AutoDeleteMediaDays    *int    `json:"auto_delete_media_days"`
+		RequireTwoFA           *bool   `json:"require_2fa"`
 		Name                   *string `json:"name"`
 	}
 
@@ -108,6 +114,9 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.AutoDeleteMediaDays != nil && *req.AutoDeleteMediaDays > 0 {
 		org.Settings["auto_delete_media_days"] = *req.AutoDeleteMediaDays
+	}
+	if req.RequireTwoFA != nil {
+		org.Settings["require_2fa"] = *req.RequireTwoFA
 	}
 	if req.Name != nil && *req.Name != "" {
 		org.Name = *req.Name

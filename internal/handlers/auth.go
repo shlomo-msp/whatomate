@@ -35,6 +35,8 @@ type AuthResponse struct {
 	User         models.User `json:"user"`
 	RequiresTwoFA bool       `json:"requires_2fa,omitempty"`
 	TwoFAToken    string     `json:"two_fa_token,omitempty"`
+	RequiresTwoFASetup bool  `json:"requires_2fa_setup,omitempty"`
+	TwoFASetupToken    string `json:"two_fa_setup_token,omitempty"`
 }
 
 // RefreshRequest represents token refresh request
@@ -83,6 +85,22 @@ func (a *App) Login(r *fastglue.Request) error {
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid credentials", nil, "")
+	}
+
+	if !user.TOTPEnabled {
+		orgRequires, _ := a.isOrgTwoFARequired(user.OrganizationID)
+		if user.TOTPRequired || orgRequires {
+			setupToken, err := a.generateTwoFASetupToken(&user)
+			if err != nil {
+				a.Log.Error("Failed to generate 2FA setup token", "error", err)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate token", nil, "")
+			}
+			return r.SendEnvelope(AuthResponse{
+				RequiresTwoFASetup: true,
+				TwoFASetupToken:    setupToken,
+				User:               user,
+			})
+		}
 	}
 
 	if user.TOTPEnabled {
@@ -325,4 +343,17 @@ func generateSlug(name string) string {
 		}
 	}
 	return slug + "-" + uuid.New().String()[:8]
+}
+
+func (a *App) isOrgTwoFARequired(orgID uuid.UUID) (bool, error) {
+	var org models.Organization
+	if err := a.DB.Select("settings").Where("id = ?", orgID).First(&org).Error; err != nil {
+		return false, err
+	}
+	if org.Settings != nil {
+		if v, ok := org.Settings["require_2fa"].(bool); ok {
+			return v, nil
+		}
+	}
+	return false, nil
 }

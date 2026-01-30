@@ -35,6 +35,7 @@ export interface User {
   is_available?: boolean
   is_super_admin?: boolean
   totp_enabled?: boolean
+  totp_required?: boolean
 }
 
 export interface AuthState {
@@ -113,20 +114,33 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(email: string, password: string): Promise<{ requires_2fa: boolean; two_fa_token?: string }> {
+  async function login(email: string, password: string): Promise<{
+    requires_2fa: boolean
+    requires_2fa_setup: boolean
+    two_fa_token?: string
+    two_fa_setup_token?: string
+  }> {
     const response = await api.post('/auth/login', { email, password })
     // fastglue wraps response in { status: "success", data: {...} }
     const data = response.data.data
     if (data?.requires_2fa) {
-      return { requires_2fa: true, two_fa_token: data.two_fa_token }
+      return { requires_2fa: true, requires_2fa_setup: false, two_fa_token: data.two_fa_token }
+    }
+    if (data?.requires_2fa_setup) {
+      return { requires_2fa: false, requires_2fa_setup: true, two_fa_setup_token: data.two_fa_setup_token }
     }
     setAuth(data)
-    return { requires_2fa: false }
+    return { requires_2fa: false, requires_2fa_setup: false }
   }
 
   async function verifyTwoFA(twoFAToken: string, code: string): Promise<void> {
     const response = await api.post('/auth/2fa/verify', { two_fa_token: twoFAToken, code })
     setAuth(response.data.data)
+  }
+
+  async function setupTwoFA(twoFAToken: string): Promise<{ secret: string; otpauth_url: string; qr_code: string }> {
+    const response = await api.post('/auth/2fa/setup', { two_fa_token: twoFAToken })
+    return response.data.data
   }
 
   async function register(data: {
@@ -242,6 +256,7 @@ export const useAuthStore = defineStore('auth', () => {
     setAvailability,
     hasPermission,
     hasAnyPermission,
-    verifyTwoFA
+    verifyTwoFA,
+    setupTwoFA
   }
 })

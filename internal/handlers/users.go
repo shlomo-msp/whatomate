@@ -18,6 +18,7 @@ type UserRequest struct {
 	RoleID       *uuid.UUID `json:"role_id"`
 	IsActive     *bool      `json:"is_active"`
 	IsSuperAdmin *bool      `json:"is_super_admin"`
+	TOTPRequired *bool      `json:"totp_required"`
 }
 
 // UserResponse represents the response for a user (without sensitive data)
@@ -31,6 +32,7 @@ type UserResponse struct {
 	IsAvailable    bool         `json:"is_available"`
 	IsSuperAdmin   bool         `json:"is_super_admin"`
 	TOTPEnabled    bool         `json:"totp_enabled"`
+	TOTPRequired   bool         `json:"totp_required"`
 	OrganizationID uuid.UUID    `json:"organization_id"`
 	Settings       models.JSONB `json:"settings,omitempty"`
 	CreatedAt      string       `json:"created_at"`
@@ -183,6 +185,10 @@ func (a *App) CreateUser(r *fastglue.Request) error {
 		IsActive:       true,
 	}
 
+	if req.TOTPRequired != nil {
+		user.TOTPRequired = *req.TOTPRequired
+	}
+
 	// Only superadmins can create other superadmins
 	if req.IsSuperAdmin != nil && *req.IsSuperAdmin {
 		if !a.IsSuperAdmin(userID) {
@@ -298,6 +304,13 @@ func (a *App) UpdateUser(r *fastglue.Request) error {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot remove your own super admin status", nil, "")
 		}
 		user.IsSuperAdmin = *req.IsSuperAdmin
+	}
+
+	if req.TOTPRequired != nil {
+		if currentUserID != id && !a.HasPermission(currentUserID, models.ResourceUsers, models.ActionWrite) {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions to update 2FA requirement", nil, "")
+		}
+		user.TOTPRequired = *req.TOTPRequired
 	}
 
 	if err := a.DB.Save(&user).Error; err != nil {
@@ -512,6 +525,7 @@ func userToResponse(user models.User) UserResponse {
 		IsAvailable:    user.IsAvailable,
 		IsSuperAdmin:   user.IsSuperAdmin,
 		TOTPEnabled:    user.TOTPEnabled,
+		TOTPRequired:   user.TOTPRequired,
 		OrganizationID: user.OrganizationID,
 		Settings:       user.Settings,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z"),
