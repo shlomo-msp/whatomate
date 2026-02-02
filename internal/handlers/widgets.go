@@ -139,12 +139,10 @@ var staticDisplayTypes = map[string]bool{
 
 // ListWidgets returns all widgets for the user (their own + shared)
 func (a *App) ListWidgets(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Check analytics read permission
 	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead) {
@@ -174,12 +172,10 @@ func (a *App) ListWidgets(r *fastglue.Request) error {
 
 // GetWidget returns a single widget
 func (a *App) GetWidget(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Check analytics read permission
 	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead) {
@@ -204,12 +200,10 @@ func (a *App) GetWidget(r *fastglue.Request) error {
 
 // CreateWidget creates a new widget
 func (a *App) CreateWidget(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Check analytics write permission
 	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite) {
@@ -217,8 +211,8 @@ func (a *App) CreateWidget(r *fastglue.Request) error {
 	}
 
 	var req WidgetRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -364,12 +358,10 @@ func (a *App) CreateWidget(r *fastglue.Request) error {
 
 // UpdateWidget updates a widget
 func (a *App) UpdateWidget(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Check analytics write permission
 	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite) {
@@ -393,8 +385,8 @@ func (a *App) UpdateWidget(r *fastglue.Request) error {
 	}
 
 	var req WidgetRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Update fields
@@ -489,12 +481,10 @@ func (a *App) UpdateWidget(r *fastglue.Request) error {
 
 // DeleteWidget deletes a widget
 func (a *App) DeleteWidget(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Check analytics delete permission
 	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionDelete) {
@@ -527,12 +517,10 @@ func (a *App) DeleteWidget(r *fastglue.Request) error {
 
 // SaveWidgetLayout bulk saves grid positions for all widgets
 func (a *App) SaveWidgetLayout(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	var req struct {
 		Layout []struct {
@@ -543,8 +531,8 @@ func (a *App) SaveWidgetLayout(r *fastglue.Request) error {
 			GridH int       `json:"grid_h"`
 		} `json:"layout"`
 	}
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	if len(req.Layout) == 0 {
@@ -681,12 +669,10 @@ func formatLabel(s string) string {
 
 // GetWidgetData executes the widget query and returns the data
 func (a *App) GetWidgetData(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	id, err := parsePathUUID(r, "id", "widget")
 	if err != nil {
@@ -719,12 +705,10 @@ func (a *App) GetWidgetData(r *fastglue.Request) error {
 
 // GetAllWidgetsData returns data for all user's widgets in a single request
 func (a *App) GetAllWidgetsData(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Parse date range from query params
 	fromStr := string(r.RequestCtx.QueryArgs().Peek("from"))
@@ -762,18 +746,15 @@ func (a *App) executeWidgetQuery(orgID uuid.UUID, widget models.Widget, fromStr,
 	now := time.Now()
 
 	var periodStart, periodEnd time.Time
-	var err error
 
 	if fromStr != "" && toStr != "" {
-		periodStart, err = time.Parse("2006-01-02", fromStr)
-		if err != nil {
+		var errMsg string
+		periodStart, periodEnd, errMsg = parseDateRange(fromStr, toStr)
+		if errMsg != "" {
+			// Fall back to current month on parse error
 			periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		}
-		periodEnd, err = time.Parse("2006-01-02", toStr)
-		if err != nil {
 			periodEnd = now
 		}
-		periodEnd = endOfDay(periodEnd)
 	} else {
 		// Default to current month
 		periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

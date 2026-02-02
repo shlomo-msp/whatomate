@@ -63,29 +63,41 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
+	pg := parsePagination(r)
+
 	// Get query params
 	status := string(r.RequestCtx.QueryArgs().Peek("status"))
 	whatsappAccount := string(r.RequestCtx.QueryArgs().Peek("whatsapp_account"))
+	search := string(r.RequestCtx.QueryArgs().Peek("search"))
 
-	var campaigns []models.BulkMessageCampaign
-	query := a.DB.Where("organization_id = ?", orgID).
-		Preload("Template").
-		Order("created_at DESC")
+	baseQuery := a.DB.Where("organization_id = ?", orgID)
+
+	if search != "" {
+		baseQuery = baseQuery.Where("name ILIKE ?", "%"+search+"%")
+	}
 
 	if status != "" {
-		query = query.Where("status = ?", status)
+		baseQuery = baseQuery.Where("status = ?", status)
 	}
 	if whatsappAccount != "" {
-		query = query.Where("whats_app_account = ?", whatsappAccount)
+		baseQuery = baseQuery.Where("whats_app_account = ?", whatsappAccount)
 	}
 	if from, ok := parseDateParam(r, "from"); ok {
-		query = query.Where("created_at >= ?", from)
+		baseQuery = baseQuery.Where("created_at >= ?", from)
 	}
 	if to, ok := parseDateParam(r, "to"); ok {
-		query = query.Where("created_at <= ?", endOfDay(to))
+		baseQuery = baseQuery.Where("created_at <= ?", endOfDay(to))
 	}
 
-	if err := query.Find(&campaigns).Error; err != nil {
+	// Get total count
+	var total int64
+	baseQuery.Model(&models.BulkMessageCampaign{}).Count(&total)
+
+	var campaigns []models.BulkMessageCampaign
+	if err := pg.Apply(baseQuery.
+		Preload("Template").
+		Order("created_at DESC")).
+		Find(&campaigns).Error; err != nil {
 		a.Log.Error("Failed to list campaigns", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list campaigns", nil, "")
 	}
@@ -120,25 +132,22 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 
 	return r.SendEnvelope(map[string]interface{}{
 		"campaigns": response,
-		"total":     len(response),
+		"total":     total,
+		"page":      pg.Page,
+		"limit":     pg.Limit,
 	})
 }
 
 // CreateCampaign implements campaign creation
 func (a *App) CreateCampaign(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
-	}
-
-	userID, err := a.getUserIDFromContext(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
 	var req CampaignRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate template exists
@@ -203,10 +212,9 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	var campaign models.BulkMessageCampaign
@@ -249,10 +257,9 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -266,8 +273,8 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 
 	var req CampaignRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Update fields
@@ -327,10 +334,9 @@ func (a *App) DeleteCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -369,10 +375,9 @@ func (a *App) StartCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -445,10 +450,9 @@ func (a *App) PauseCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -480,10 +484,9 @@ func (a *App) CancelCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -515,10 +518,9 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -608,10 +610,9 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
@@ -626,8 +627,8 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 	var req struct {
 		Recipients []RecipientRequest `json:"recipients" validate:"required"`
 	}
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Create recipients
@@ -668,10 +669,9 @@ func (a *App) GetCampaignRecipients(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(campaignID)
+	id, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	// Verify campaign belongs to org
@@ -699,17 +699,14 @@ func (a *App) DeleteCampaignRecipient(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	recipientID := r.RequestCtx.UserValue("recipientId").(string)
-
-	campaignUUID, err := uuid.Parse(campaignID)
+	campaignUUID, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
-	recipientUUID, err := uuid.Parse(recipientID)
+	recipientUUID, err := parsePathUUID(r, "recipientId", "recipient")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid recipient ID", nil, "")
+		return nil
 	}
 
 	// Verify campaign belongs to org and is in draft status
@@ -748,10 +745,9 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	campaignID := r.RequestCtx.UserValue("id").(string)
-	campaignUUID, err := uuid.Parse(campaignID)
+	campaignUUID, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	// Get campaign with template
@@ -819,7 +815,7 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 	}
 
 	// Save file locally for preview
-	localPath, err := a.saveCampaignMedia(campaignID, data, mimeType)
+	localPath, err := a.saveCampaignMedia(campaignUUID.String(), data, mimeType)
 	if err != nil {
 		a.Log.Error("Failed to save media locally", "error", err)
 		// Don't fail the request, just log the error - preview won't work
@@ -837,7 +833,7 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save media info", nil, "")
 	}
 
-	a.Log.Info("Campaign media uploaded", "campaign_id", campaignID, "media_id", mediaID, "filename", fileHeader.Filename, "local_path", localPath)
+	a.Log.Info("Campaign media uploaded", "campaign_id", campaignUUID, "media_id", mediaID, "filename", fileHeader.Filename, "local_path", localPath)
 
 	return r.SendEnvelope(map[string]interface{}{
 		"media_id":   mediaID,
@@ -881,20 +877,19 @@ func (a *App) saveCampaignMedia(campaignID string, data []byte, mimeType string)
 // ServeCampaignMedia serves campaign media files for preview
 func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 	// Get auth context
-	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if !ok {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
 	// Get campaign ID from URL
-	campaignIDStr := r.RequestCtx.UserValue("id").(string)
-	campaignID, err := uuid.Parse(campaignIDStr)
+	campaignUUID, err := parsePathUUID(r, "id", "campaign")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid campaign ID", nil, "")
+		return nil
 	}
 
 	// Find campaign and verify access
-	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, campaignID, orgID, "Campaign")
+	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, campaignUUID, orgID, "Campaign")
 	if err != nil {
 		return nil
 	}
@@ -963,20 +958,6 @@ func getMimeTypeFromExtension(ext string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-// getUserIDFromContext extracts user ID from request context (set by auth middleware)
-func (a *App) getUserIDFromContext(r *fastglue.Request) (uuid.UUID, error) {
-	userIDVal := r.RequestCtx.UserValue("user_id")
-	if userIDVal == nil {
-		return uuid.Nil, fasthttp.ErrNoMultipartForm
-	}
-	// The middleware stores uuid.UUID directly, not as string
-	userID, ok := userIDVal.(uuid.UUID)
-	if !ok {
-		return uuid.Nil, fasthttp.ErrNoMultipartForm
-	}
-	return userID, nil
 }
 
 // incrementCampaignStat increments the appropriate campaign counter based on status

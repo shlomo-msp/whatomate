@@ -90,7 +90,8 @@ export const authService = {
 }
 
 export const usersService = {
-  list: () => api.get('/users'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get('/users', { params }),
   get: (id: string) => api.get(`/users/${id}`),
   create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
     api.post('/users', data),
@@ -115,7 +116,8 @@ export const usersService = {
 }
 
 export const apiKeysService = {
-  list: () => api.get('/api-keys'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ api_keys: any[]; total?: number }>('/api-keys', { params }),
   create: (data: { name: string; expires_at?: string }) =>
     api.post('/api-keys', data),
   delete: (id: string) => api.delete(`/api-keys/${id}`)
@@ -130,7 +132,7 @@ export const accountsService = {
 }
 
 export const contactsService = {
-  list: (params?: { search?: string; page?: number; limit?: number }) =>
+  list: (params?: { search?: string; page?: number; limit?: number; tags?: string }) =>
     api.get('/contacts', { params }),
   get: (id: string) => api.get(`/contacts/${id}`),
   create: (data: any) => api.post('/contacts', data),
@@ -138,6 +140,8 @@ export const contactsService = {
   delete: (id: string) => api.delete(`/contacts/${id}`),
   assign: (id: string, userId: string | null) =>
     api.put(`/contacts/${id}/assign`, { user_id: userId }),
+  updateTags: (id: string, tags: string[]) =>
+    api.put(`/contacts/${id}/tags`, { tags }),
   getSessionData: (id: string) => api.get(`/contacts/${id}/session-data`),
   import: (file: File) => {
     const formData = new FormData()
@@ -160,8 +164,8 @@ export const messagesService = {
 }
 
 export const templatesService = {
-  list: (params?: { status?: string; category?: string }) =>
-    api.get('/templates', { params }),
+  list: (params?: { status?: string; category?: string; account?: string; search?: string; page?: number; limit?: number }) =>
+    api.get<{ templates: any[]; total?: number }>('/templates', { params }),
   get: (id: string) => api.get(`/templates/${id}`),
   create: (data: any) => api.post('/templates', data),
   update: (id: string, data: any) => api.put(`/templates/${id}`, data),
@@ -180,7 +184,8 @@ export const templatesService = {
 }
 
 export const flowsService = {
-  list: () => api.get('/flows'),
+  list: (params?: { account?: string; search?: string; page?: number; limit?: number }) =>
+    api.get<{ flows: any[]; total?: number }>('/flows', { params }),
   get: (id: string) => api.get(`/flows/${id}`),
   create: (data: any) => api.post('/flows', data),
   update: (id: string, data: any) => api.put(`/flows/${id}`, data),
@@ -193,7 +198,8 @@ export const flowsService = {
 }
 
 export const campaignsService = {
-  list: (params?: { status?: string; from?: string; to?: string }) => api.get('/campaigns', { params }),
+  list: (params?: { status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) =>
+    api.get('/campaigns', { params }),
   get: (id: string) => api.get(`/campaigns/${id}`),
   create: (data: any) => api.post('/campaigns', data),
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
@@ -229,21 +235,24 @@ export const chatbotService = {
   updateSettings: (data: any) => api.put('/chatbot/settings', data),
 
   // Keywords
-  listKeywords: () => api.get('/chatbot/keywords'),
+  listKeywords: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ rules: any[]; total?: number }>('/chatbot/keywords', { params }),
   getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
   createKeyword: (data: any) => api.post('/chatbot/keywords', data),
   updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
   deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
 
   // Flows
-  listFlows: () => api.get('/chatbot/flows'),
+  listFlows: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ flows: any[]; total?: number }>('/chatbot/flows', { params }),
   getFlow: (id: string) => api.get(`/chatbot/flows/${id}`),
   createFlow: (data: any) => api.post('/chatbot/flows', data),
   updateFlow: (id: string, data: any) => api.put(`/chatbot/flows/${id}`, data),
   deleteFlow: (id: string) => api.delete(`/chatbot/flows/${id}`),
 
   // AI Contexts
-  listAIContexts: () => api.get('/chatbot/ai-contexts'),
+  listAIContexts: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ contexts: any[]; total?: number }>('/chatbot/ai-contexts', { params }),
   getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
   createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
   updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
@@ -289,8 +298,8 @@ export interface CannedResponse {
 }
 
 export const cannedResponsesService = {
-  list: (params?: { category?: string; search?: string; active_only?: string }) =>
-    api.get('/canned-responses', { params }),
+  list: (params?: { category?: string; search?: string; active_only?: string; page?: number; limit?: number }) =>
+    api.get<{ canned_responses: CannedResponse[]; total?: number }>('/canned-responses', { params }),
   get: (id: string) => api.get(`/canned-responses/${id}`),
   create: (data: { name: string; shortcut?: string; content: string; category?: string }) =>
     api.post('/canned-responses', data),
@@ -318,6 +327,128 @@ export const agentAnalyticsService = {
     api.get(`/analytics/agents/${id}`, { params }),
   getComparison: (params?: { from?: string; to?: string }) =>
     api.get('/analytics/agents/comparison', { params })
+}
+
+// Meta WhatsApp Analytics Types
+export type MetaAnalyticsType =
+  | 'analytics'
+  | 'conversation_analytics'
+  | 'pricing_analytics'
+  | 'template_analytics'
+  | 'call_analytics'
+
+export type MetaGranularity = 'HALF_HOUR' | 'DAY' | 'MONTH'
+
+export interface MetaAnalyticsAccount {
+  id: string
+  name: string
+  phone_id: string
+}
+
+export interface MetaMessagingDataPoint {
+  start: number
+  end: number
+  sent: number
+  delivered: number
+}
+
+export interface MetaConversationDataPoint {
+  start: number
+  end: number
+  conversation: number
+  conversation_type: string
+  conversation_direction: string
+  conversation_category: string
+  cost: number
+}
+
+export interface MetaPricingDataPoint {
+  start: number
+  end: number
+  volume: number
+  cost: number
+  country?: string              // Country code (IN, US, etc.)
+  pricing_type?: string         // FREE_CUSTOMER_SERVICE, FREE_ENTRY_POINT, REGULAR
+  pricing_category?: string     // MARKETING, UTILITY, AUTHENTICATION, SERVICE, etc.
+  tier?: string                 // Pricing tier
+}
+
+export interface MetaTemplateCostItem {
+  type: string    // amount_spent, cost_per_delivered, cost_per_url_button_click
+  value?: number  // The cost value
+}
+
+export interface MetaTemplateClickItem {
+  type: string           // quick_reply_button, unique_url_button
+  button_content: string // The button text
+  count: number          // Number of clicks
+}
+
+export interface MetaTemplateDataPoint {
+  start: number
+  end: number
+  template_id: string
+  sent: number
+  delivered: number
+  read: number
+  replied?: number
+  clicked?: MetaTemplateClickItem[]  // Array of button click details
+  cost?: MetaTemplateCostItem[]
+}
+
+export interface MetaCallDataPoint {
+  start: number
+  end: number
+  total_calls: number
+  call_duration: number
+  call_type: string
+  call_direction: string
+}
+
+export interface MetaAnalyticsData {
+  id: string
+  analytics?: {
+    granularity: string
+    data_points: MetaMessagingDataPoint[]
+  }
+  conversation_analytics?: {
+    granularity: string
+    data_points: MetaConversationDataPoint[]
+  }
+  pricing_analytics?: {
+    granularity: string
+    data_points: MetaPricingDataPoint[]
+  }
+  template_analytics?: {
+    granularity: string
+    data_points: MetaTemplateDataPoint[]
+  }
+  call_analytics?: {
+    granularity: string
+    data_points: MetaCallDataPoint[]
+  }
+}
+
+export interface MetaAnalyticsResponse {
+  account_id: string
+  account_name: string
+  data: MetaAnalyticsData | null
+  template_names?: Record<string, string> // meta_template_id -> template name
+}
+
+export const metaAnalyticsService = {
+  get: (params: {
+    account_id?: string
+    analytics_type: MetaAnalyticsType
+    start: string
+    end: string
+    granularity?: MetaGranularity
+    template_ids?: string
+  }) => api.get<{ accounts: MetaAnalyticsResponse[]; cached: boolean }>('/analytics/meta', { params }),
+
+  getAccounts: () => api.get<{ accounts: MetaAnalyticsAccount[] }>('/analytics/meta/accounts'),
+
+  refresh: () => api.post('/analytics/meta/refresh')
 }
 
 // Dashboard Widgets (customizable analytics)
@@ -513,7 +644,8 @@ export interface TeamMember {
 }
 
 export const teamsService = {
-  list: () => api.get<{ teams: Team[] }>('/teams'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ teams: Team[] }>('/teams', { params }),
   get: (id: string) => api.get<{ team: Team }>(`/teams/${id}`),
   create: (data: {
     name: string
@@ -536,7 +668,8 @@ export const teamsService = {
 }
 
 export const webhooksService = {
-  list: () => api.get<{ webhooks: Webhook[]; available_events: WebhookEvent[] }>('/webhooks'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ webhooks: Webhook[]; available_events: WebhookEvent[]; total?: number }>('/webhooks', { params }),
   get: (id: string) => api.get<Webhook>(`/webhooks/${id}`),
   create: (data: {
     name: string
@@ -590,7 +723,8 @@ export interface ActionResult {
 }
 
 export const customActionsService = {
-  list: () => api.get<{ custom_actions: CustomAction[] }>('/custom-actions'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ custom_actions: CustomAction[]; total?: number }>('/custom-actions', { params }),
   get: (id: string) => api.get<CustomAction>(`/custom-actions/${id}`),
   create: (data: {
     name: string
@@ -635,7 +769,8 @@ export interface Role {
 }
 
 export const rolesService = {
-  list: () => api.get<{ roles: Role[] }>('/roles'),
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ roles: Role[] }>('/roles', { params }),
   get: (id: string) => api.get<Role>(`/roles/${id}`),
   create: (data: { name: string; description?: string; is_default?: boolean; permissions: string[] }) =>
     api.post<Role>('/roles', data),
@@ -646,6 +781,24 @@ export const rolesService = {
 
 export const permissionsService = {
   list: () => api.get<{ permissions: Permission[] }>('/permissions')
+}
+
+// Tags
+export interface Tag {
+  name: string
+  color: string
+  created_at: string
+  updated_at: string
+}
+
+export const tagsService = {
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ tags: Tag[]; total?: number; page?: number; limit?: number }>('/tags', { params }),
+  create: (data: { name: string; color?: string }) =>
+    api.post<Tag>('/tags', data),
+  update: (name: string, data: { name?: string; color?: string }) =>
+    api.put<Tag>(`/tags/${encodeURIComponent(name)}`, data),
+  delete: (name: string) => api.delete(`/tags/${encodeURIComponent(name)}`)
 }
 
 export default api

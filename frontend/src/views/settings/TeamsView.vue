@@ -20,10 +20,10 @@ import { type Team, type TeamMember } from '@/services/api'
 import { toast } from 'vue-sonner'
 import { Plus, Pencil, Trash2, Loader2, Users, UserPlus, UserMinus, RotateCcw, Scale, Hand } from 'lucide-vue-next'
 import { useCrudState } from '@/composables/useCrudState'
-import { useSearch } from '@/composables/useSearch'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { ASSIGNMENT_STRATEGIES, getLabelFromValue } from '@/lib/constants'
+import { useDebounceFn } from '@vueuse/core'
 
 const teamsStore = useTeamsStore()
 const usersStore = useUsersStore()
@@ -44,7 +44,26 @@ const {
   formData, openCreateDialog, openEditDialog: baseOpenEditDialog, openDeleteDialog, closeDialog, closeDeleteDialog,
 } = useCrudState<Team, TeamFormData>(defaultFormData)
 
-const { searchQuery, filteredItems: filteredTeams } = useSearch(computed(() => teamsStore.teams), ['name', 'description'] as (keyof Team)[])
+const teams = ref<Team[]>([])
+const searchQuery = ref('')
+
+// Pagination state
+const currentPage = ref(1)
+const totalItems = ref(0)
+const pageSize = 20
+
+// Debounced search
+const debouncedSearch = useDebounceFn(() => {
+  currentPage.value = 1
+  fetchTeams()
+}, 300)
+
+watch(searchQuery, () => debouncedSearch())
+
+function handlePageChange(page: number) {
+  currentPage.value = page
+  fetchTeams()
+}
 
 // Members dialog state
 const isMembersDialogOpen = ref(false)
@@ -61,25 +80,36 @@ const availableUsers = computed(() => {
 })
 
 const columns: Column<Team>[] = [
-  { key: 'team', label: 'Team', width: 'w-[250px]' },
-  { key: 'strategy', label: 'Strategy' },
-  { key: 'members', label: 'Members' },
-  { key: 'status', label: 'Status' },
-  { key: 'created', label: 'Created' },
+  { key: 'team', label: 'Team', width: 'w-[250px]', sortable: true, sortKey: 'name' },
+  { key: 'strategy', label: 'Strategy', sortable: true, sortKey: 'assignment_strategy' },
+  { key: 'members', label: 'Members', sortable: true, sortKey: 'member_count' },
+  { key: 'status', label: 'Status', sortable: true, sortKey: 'is_active' },
+  { key: 'created', label: 'Created', sortable: true, sortKey: 'created_at' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
+
+// Sorting state
+const sortKey = ref('name')
+const sortDirection = ref<'asc' | 'desc'>('asc')
 
 function openEditDialog(team: Team) {
   baseOpenEditDialog(team, (t) => ({ name: t.name, description: t.description || '', assignment_strategy: t.assignment_strategy, is_active: t.is_active }))
 }
 
 watch(() => organizationsStore.selectedOrgId, () => { fetchTeams(); usersStore.fetchUsers() })
-onMounted(() => Promise.all([fetchTeams(), usersStore.fetchUsers()]))
+onMounted(() => { fetchTeams(); usersStore.fetchUsers() })
 
 async function fetchTeams() {
   isLoading.value = true
-  try { await teamsStore.fetchTeams() }
-  catch { toast.error('Failed to load teams') }
+  try {
+    const response = await teamsStore.fetchTeams({
+      search: searchQuery.value || undefined,
+      page: currentPage.value,
+      limit: pageSize
+    })
+    teams.value = response.teams
+    totalItems.value = response.total
+  } catch { toast.error('Failed to load teams') }
   finally { isLoading.value = false }
 }
 
@@ -95,13 +125,14 @@ async function saveTeam() {
       toast.success('Team created successfully')
     }
     closeDialog()
+    await fetchTeams()
   } catch (e) { toast.error(getErrorMessage(e, 'Failed to save team')) }
   finally { isSubmitting.value = false }
 }
 
 async function confirmDelete() {
   if (!teamToDelete.value) return
-  try { await teamsStore.deleteTeam(teamToDelete.value.id); toast.success('Team deleted'); closeDeleteDialog() }
+  try { await teamsStore.deleteTeam(teamToDelete.value.id); toast.success('Team deleted'); closeDeleteDialog(); await fetchTeams() }
   catch (e) { toast.error(getErrorMessage(e, 'Failed to delete team')) }
 }
 
@@ -146,21 +177,21 @@ function getStrategyIcon(strategy: string) { return { round_robin: RotateCcw, lo
 
     <ScrollArea class="flex-1">
       <div class="p-6">
-        <div class="max-w-6xl mx-auto space-y-4">
-          <div class="flex items-center gap-4">
-            <SearchInput v-model="searchQuery" placeholder="Search teams..." class="flex-1 max-w-sm" />
-            <div class="text-sm text-muted-foreground">{{ filteredTeams.length }} team{{ filteredTeams.length !== 1 ? 's' : '' }}</div>
-          </div>
-
+        <div class="max-w-6xl mx-auto">
           <Card>
             <CardHeader>
-              <CardTitle>Your Teams</CardTitle>
-              <CardDescription>Organize agents into teams with assignment strategies: Round Robin, Load Balanced, or Manual Queue.</CardDescription>
+              <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <CardTitle>Your Teams</CardTitle>
+                  <CardDescription>Organize agents into teams with assignment strategies: Round Robin, Load Balanced, or Manual Queue.</CardDescription>
+                </div>
+                <SearchInput v-model="searchQuery" placeholder="Search teams..." class="w-64" />
+              </div>
             </CardHeader>
             <CardContent>
-              <DataTable :items="filteredTeams" :columns="columns" :is-loading="isLoading" :empty-icon="Users" :empty-title="searchQuery ? 'No teams found matching your search' : 'No teams created yet'">
+              <DataTable :items="teams" :columns="columns" :is-loading="isLoading" :empty-icon="Users" :empty-title="searchQuery ? 'No matching teams' : 'No teams created yet'" :empty-description="searchQuery ? 'No teams match your search.' : 'Create your first team to organize agents.'" v-model:sort-key="sortKey" v-model:sort-direction="sortDirection" server-pagination :current-page="currentPage" :total-items="totalItems" :page-size="pageSize" item-name="teams" @page-change="handlePageChange">
                 <template #empty-action>
-                  <Button v-if="isAdmin && !searchQuery" variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />Create First Team</Button>
+                  <Button v-if="isAdmin" variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />Add Team</Button>
                 </template>
                 <template #cell-team="{ item: team }">
                   <div class="flex items-center gap-3">

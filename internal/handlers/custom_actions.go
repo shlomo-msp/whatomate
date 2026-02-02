@@ -80,8 +80,15 @@ func (a *App) ListCustomActions(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
+	pg := parsePagination(r)
+
+	var total int64
+	a.DB.Model(&models.CustomAction{}).Where("organization_id = ?", orgID).Count(&total)
+
 	var actions []models.CustomAction
-	if err := a.DB.Where("organization_id = ?", orgID).Order("display_order ASC, created_at DESC").Find(&actions).Error; err != nil {
+	if err := pg.Apply(a.DB.Where("organization_id = ?", orgID).
+		Order("display_order ASC, created_at DESC")).
+		Find(&actions).Error; err != nil {
 		a.Log.Error("Failed to list custom actions", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list custom actions", nil, "")
 	}
@@ -91,8 +98,11 @@ func (a *App) ListCustomActions(r *fastglue.Request) error {
 		result[i] = customActionToResponse(action)
 	}
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"custom_actions": result,
+		"total":          total,
+		"page":           pg.Page,
+		"limit":          pg.Limit,
 	})
 }
 
@@ -124,8 +134,8 @@ func (a *App) CreateCustomAction(r *fastglue.Request) error {
 	}
 
 	var req CustomActionRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -181,8 +191,8 @@ func (a *App) UpdateCustomAction(r *fastglue.Request) error {
 	}
 
 	var req CustomActionRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Build updates
@@ -252,12 +262,10 @@ func (a *App) DeleteCustomAction(r *fastglue.Request) error {
 
 // ExecuteCustomAction executes a custom action with the given context
 func (a *App) ExecuteCustomAction(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	actionID, err := parsePathUUID(r, "id", "action")
 	if err != nil {
@@ -265,8 +273,8 @@ func (a *App) ExecuteCustomAction(r *fastglue.Request) error {
 	}
 
 	var req ExecuteActionRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Get the action

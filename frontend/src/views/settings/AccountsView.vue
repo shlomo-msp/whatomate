@@ -10,24 +10,6 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -35,7 +17,7 @@ import {
 import { api } from '@/services/api'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { toast } from 'vue-sonner'
-import { PageHeader } from '@/components/shared'
+import { PageHeader, CrudFormDialog, DeleteConfirmDialog } from '@/components/shared'
 import { getErrorMessage } from '@/lib/api-utils'
 import {
   Plus,
@@ -50,7 +32,10 @@ import {
   ExternalLink,
   AlertCircle,
   CheckCircle2,
-  Settings2
+  Settings2,
+  TestTube2,
+  Store,
+  Bell
 } from 'lucide-vue-next'
 
 interface WhatsAppAccount {
@@ -80,7 +65,13 @@ interface TestResult {
   verified_name?: string
   quality_rating?: string
   messaging_limit_tier?: string
+  code_verification_status?: string
+  account_mode?: string
+  is_test_number?: boolean
+  warning?: string
 }
+
+import BusinessProfileDialog from './BusinessProfileDialog.vue'
 
 const organizationsStore = useOrganizationsStore()
 
@@ -91,8 +82,18 @@ const isSubmitting = ref(false)
 const editingAccount = ref<WhatsAppAccount | null>(null)
 const testingAccountId = ref<string | null>(null)
 const testResults = ref<Record<string, TestResult>>({})
+const subscribingAccountId = ref<string | null>(null)
 const deleteDialogOpen = ref(false)
 const accountToDelete = ref<WhatsAppAccount | null>(null)
+
+// Business Profile Dialog State
+const isProfileDialogOpen = ref(false)
+const profileAccount = ref<WhatsAppAccount | null>(null)
+
+function openProfileDialog(account: WhatsAppAccount) {
+  profileAccount.value = account
+  isProfileDialogOpen.value = true
+}
 
 const formData = ref({
   name: '',
@@ -245,6 +246,22 @@ async function testConnection(account: WhatsAppAccount) {
   }
 }
 
+async function subscribeApp(account: WhatsAppAccount) {
+  subscribingAccountId.value = account.id
+  try {
+    const response = await api.post(`/accounts/${account.id}/subscribe`)
+    if (response.data.data.success) {
+      toast.success('Subscribed to webhooks successfully! You should now receive incoming messages.')
+    } else {
+      toast.error('Subscription failed: ' + (response.data.data.error || 'Unknown error'))
+    }
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to subscribe to webhooks'))
+  } finally {
+    subscribingAccountId.value = null
+  }
+}
+
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text)
   toast.success(`${label} copied to clipboard`)
@@ -308,7 +325,7 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
             </div>
           </div>
         </div>
-        </div>
+      </div>
       </div>
     </ScrollArea>
 
@@ -339,7 +356,7 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
         </Card>
 
         <!-- Account Cards -->
-        <div v-for="account in accounts" :key="account.id" class="card-interactive rounded-xl border border-white/[0.08] bg-white/[0.02] light:bg-white light:border-gray-200">
+        <div v-for="account in accounts" :key="account.id" class="account-card card-interactive rounded-xl border border-white/[0.08] bg-white/[0.02] light:bg-white light:border-gray-200">
           <div class="p-6">
             <div class="flex items-start justify-between">
               <div class="flex items-start gap-4">
@@ -352,10 +369,15 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                     <span :class="['px-2 py-0.5 text-xs font-medium rounded-full', getStatusBadgeClass(account.status)]">
                       {{ account.status }}
                     </span>
+                    <!-- Test Number Badge -->
+                    <Badge v-if="testResults[account.id]?.is_test_number" variant="outline" class="border-amber-600 text-amber-600 light:border-amber-500 light:text-amber-700">
+                      <TestTube2 class="h-3 w-3 mr-1" />
+                      Test Number
+                    </Badge>
                   </div>
 
                   <!-- Test Result -->
-                  <div v-if="testResults[account.id]" class="mt-2">
+                  <div v-if="testResults[account.id]" class="mt-2 space-y-2">
                     <div v-if="testResults[account.id].success" class="flex items-center gap-2 text-green-400 light:text-green-600">
                       <CheckCircle2 class="h-4 w-4" />
                       <span class="text-sm font-medium">Connected</span>
@@ -366,6 +388,11 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                     <div v-else class="flex items-center gap-2 text-red-400 light:text-red-600">
                       <X class="h-4 w-4" />
                       <span class="text-sm">{{ testResults[account.id].error }}</span>
+                    </div>
+                    <!-- Warning Message for Test Numbers -->
+                    <div v-if="testResults[account.id].warning" class="flex items-start gap-2 p-2 rounded-lg bg-amber-950/50 light:bg-amber-50 border border-amber-800 light:border-amber-200">
+                      <AlertCircle class="h-4 w-4 text-amber-400 light:text-amber-600 mt-0.5 flex-shrink-0" />
+                      <span class="text-sm text-amber-300 light:text-amber-700">{{ testResults[account.id].warning }}</span>
                     </div>
                   </div>
 
@@ -393,8 +420,8 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                     <div class="flex items-center gap-2">
                       <span class="text-white/50 light:text-gray-500">Access Token:</span>
                       <Badge
-                        variant="outline"
-                        :class="account.has_access_token ? 'border-green-600 text-green-600' : 'border-destructive text-destructive'"
+                          variant="outline"
+                          :class="account.has_access_token ? 'border-green-600 text-green-600' : 'border-destructive text-destructive'"
                       >
                         {{ account.has_access_token ? 'Configured' : 'Missing' }}
                       </Badge>
@@ -402,8 +429,8 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                     <div class="flex items-center gap-2">
                       <span class="text-white/50 light:text-gray-500">App Secret:</span>
                       <Badge
-                        variant="outline"
-                        :class="account.has_app_secret ? 'border-green-600 text-green-600' : 'border-yellow-600 text-yellow-600'"
+                          variant="outline"
+                          :class="account.has_app_secret ? 'border-green-600 text-green-600' : 'border-yellow-600 text-yellow-600'"
                       >
                         {{ account.has_app_secret ? 'Configured' : 'Not Set' }}
                       </Badge>
@@ -442,10 +469,10 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
               <!-- Actions -->
               <div class="flex items-center gap-1">
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  @click="testConnection(account)"
-                  :disabled="testingAccountId === account.id"
+                    variant="ghost"
+                    size="sm"
+                    @click="testConnection(account)"
+                    :disabled="testingAccountId === account.id"
                 >
                   <Loader2 v-if="testingAccountId === account.id" class="h-4 w-4 animate-spin" />
                   <RefreshCw v-else class="h-4 w-4" />
@@ -453,11 +480,34 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                 </Button>
                 <Tooltip>
                   <TooltipTrigger as-child>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        @click="subscribeApp(account)"
+                        :disabled="subscribingAccountId === account.id"
+                    >
+                      <Loader2 v-if="subscribingAccountId === account.id" class="h-4 w-4 animate-spin" />
+                      <Bell v-else class="h-4 w-4" />
+                      <span class="ml-1">Subscribe</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Subscribe app to receive webhooks from Meta</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger as-child>
                     <Button variant="ghost" size="icon" @click="openEditDialog(account)">
                       <Pencil class="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Edit account</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button variant="ghost" size="icon" @click="openProfileDialog(account)">
+                      <Store class="h-4 w-4 text-emerald-500" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Business Profile</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger as-child>
@@ -497,199 +547,189 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
             <ol class="list-decimal list-inside space-y-3 text-sm text-muted-foreground">
               <li>
                 Go to <a href="https://developers.facebook.com" target="_blank" class="text-primary hover:underline inline-flex items-center gap-1">
-                  Meta Developer Console <ExternalLink class="h-3 w-3" />
-                </a> and create or select your app
+                Meta Developer Console <ExternalLink class="h-3 w-3" />
+              </a> and create or select your app
               </li>
               <li>Add WhatsApp product to your app and complete the setup</li>
               <li>In WhatsApp &gt; API Setup, copy your <strong>Phone Number ID</strong> and <strong>WhatsApp Business Account ID</strong></li>
               <li>
                 Create a permanent access token in <a href="https://business.facebook.com/settings/system-users" target="_blank" class="text-primary hover:underline inline-flex items-center gap-1">
-                  Business Settings &gt; System Users <ExternalLink class="h-3 w-3" />
-                </a>
+                Business Settings &gt; System Users <ExternalLink class="h-3 w-3" />
+              </a>
               </li>
               <li>Configure the webhook URL and verify token in your Meta app settings</li>
               <li>Subscribe to messages webhook field</li>
             </ol>
           </CardContent>
         </Card>
-        </div>
+      </div>
       </div>
     </ScrollArea>
 
     <!-- Add/Edit Dialog -->
-    <Dialog v-model:open="isDialogOpen">
-      <DialogContent class="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{{ editingAccount ? 'Edit' : 'Add' }} WhatsApp Account</DialogTitle>
-          <DialogDescription>
-            Connect your WhatsApp Business account using the Meta Cloud API.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div class="space-y-4 py-4">
-          <div class="space-y-2">
-            <Label for="name">Account Name <span class="text-destructive">*</span></Label>
-            <Input
+    <CrudFormDialog
+      v-model:open="isDialogOpen"
+      :is-editing="!!editingAccount"
+      :is-submitting="isSubmitting"
+      edit-title="Edit WhatsApp Account"
+      create-title="Add WhatsApp Account"
+      description="Connect your WhatsApp Business account using the Meta Cloud API."
+      edit-submit-label="Update Account"
+      create-submit-label="Create Account"
+      max-width="max-w-lg"
+      @submit="saveAccount"
+    >
+      <div class="space-y-4">
+        <div class="space-y-2">
+          <Label for="name">Account Name <span class="text-destructive">*</span></Label>
+          <Input
               id="name"
               v-model="formData.name"
               placeholder="e.g., Main Business Line"
-            />
-          </div>
+          />
+        </div>
 
-          <Separator />
+        <Separator />
 
-          <div class="space-y-2">
-            <Label for="app_id">Meta App ID</Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="app_id">Meta App ID</Label>
+          <Input
               id="app_id"
               v-model="formData.app_id"
               placeholder="e.g., 123456789012345"
-            />
-            <p class="text-xs text-muted-foreground">
-              Found in Meta Developer Console &gt; App Dashboard
-            </p>
-          </div>
+          />
+          <p class="text-xs text-muted-foreground">
+            Found in Meta Developer Console &gt; App Dashboard
+          </p>
+        </div>
 
-          <div class="space-y-2">
-            <Label for="phone_id">Phone Number ID <span class="text-destructive">*</span></Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="phone_id">Phone Number ID <span class="text-destructive">*</span></Label>
+          <Input
               id="phone_id"
               v-model="formData.phone_id"
               placeholder="e.g., 123456789012345"
-            />
-            <p class="text-xs text-muted-foreground">
-              Found in Meta Developer Console &gt; WhatsApp &gt; API Setup
-            </p>
-          </div>
+          />
+          <p class="text-xs text-muted-foreground">
+            Found in Meta Developer Console &gt; WhatsApp &gt; API Setup
+          </p>
+        </div>
 
-          <div class="space-y-2">
-            <Label for="business_id">WhatsApp Business Account ID <span class="text-destructive">*</span></Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="business_id">WhatsApp Business Account ID <span class="text-destructive">*</span></Label>
+          <Input
               id="business_id"
               v-model="formData.business_id"
               placeholder="e.g., 987654321098765"
-            />
-          </div>
+          />
+        </div>
 
-          <div class="space-y-2">
-            <Label for="access_token">
-              Access Token
-              <span v-if="!editingAccount" class="text-destructive">*</span>
-              <span v-else class="text-muted-foreground">(leave blank to keep existing)</span>
-            </Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="access_token">
+            Access Token
+            <span v-if="!editingAccount" class="text-destructive">*</span>
+            <span v-else class="text-muted-foreground">(leave blank to keep existing)</span>
+          </Label>
+          <Input
               id="access_token"
               v-model="formData.access_token"
               type="password"
               placeholder="Permanent access token from System User"
-            />
-            <p class="text-xs text-muted-foreground">
-              Generate in Business Settings &gt; System Users &gt; Generate Token
-            </p>
-          </div>
+          />
+          <p class="text-xs text-muted-foreground">
+            Generate in Business Settings &gt; System Users &gt; Generate Token
+          </p>
+        </div>
 
-          <div class="space-y-2">
-            <Label for="app_secret">
-              App Secret
-              <span v-if="editingAccount" class="text-muted-foreground">(leave blank to keep existing)</span>
-            </Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="app_secret">
+            App Secret
+            <span v-if="editingAccount" class="text-muted-foreground">(leave blank to keep existing)</span>
+          </Label>
+          <Input
               id="app_secret"
               v-model="formData.app_secret"
               type="password"
               placeholder="Meta App Secret for webhook verification"
-            />
-            <p class="text-xs text-muted-foreground">
-              Found in Meta Developer Console &gt; App Settings &gt; Basic &gt; App Secret. Used to verify webhook signatures.
-            </p>
-          </div>
+          />
+          <p class="text-xs text-muted-foreground">
+            Found in Meta Developer Console &gt; App Settings &gt; Basic &gt; App Secret. Used to verify webhook signatures.
+          </p>
+        </div>
 
-          <Separator />
+        <Separator />
 
-          <div class="space-y-2">
-            <Label for="api_version">API Version</Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="api_version">API Version</Label>
+          <Input
               id="api_version"
               v-model="formData.api_version"
               placeholder="v21.0"
-            />
-          </div>
+          />
+        </div>
 
-          <div class="space-y-2">
-            <Label for="webhook_verify_token">Webhook Verify Token</Label>
-            <Input
+        <div class="space-y-2">
+          <Label for="webhook_verify_token">Webhook Verify Token</Label>
+          <Input
               id="webhook_verify_token"
               v-model="formData.webhook_verify_token"
               placeholder="Auto-generated if empty"
-            />
-            <p class="text-xs text-muted-foreground">
-              Used to verify webhook requests from Meta
-            </p>
-          </div>
+          />
+          <p class="text-xs text-muted-foreground">
+            Used to verify webhook requests from Meta
+          </p>
+        </div>
 
-          <Separator />
+        <Separator />
 
-          <div class="space-y-4">
-            <Label>Options</Label>
-            <div class="flex items-center justify-between">
-              <Label for="is_default_incoming" class="font-normal cursor-pointer">
-                Default for incoming messages
-              </Label>
-              <Switch
+        <div class="space-y-4">
+          <Label>Options</Label>
+          <div class="flex items-center justify-between">
+            <Label for="is_default_incoming" class="font-normal cursor-pointer">
+              Default for incoming messages
+            </Label>
+            <Switch
                 id="is_default_incoming"
                 :checked="formData.is_default_incoming"
                 @update:checked="formData.is_default_incoming = $event"
-              />
-            </div>
-            <div class="flex items-center justify-between">
-              <Label for="is_default_outgoing" class="font-normal cursor-pointer">
-                Default for outgoing messages
-              </Label>
-              <Switch
+            />
+          </div>
+          <div class="flex items-center justify-between">
+            <Label for="is_default_outgoing" class="font-normal cursor-pointer">
+              Default for outgoing messages
+            </Label>
+            <Switch
                 id="is_default_outgoing"
                 :checked="formData.is_default_outgoing"
                 @update:checked="formData.is_default_outgoing = $event"
-              />
-            </div>
-            <div class="flex items-center justify-between">
-              <Label for="auto_read_receipt" class="font-normal cursor-pointer">
-                Automatically send read receipts
-              </Label>
-              <Switch
+            />
+          </div>
+          <div class="flex items-center justify-between">
+            <Label for="auto_read_receipt" class="font-normal cursor-pointer">
+              Automatically send read receipts
+            </Label>
+            <Switch
                 id="auto_read_receipt"
                 :checked="formData.auto_read_receipt"
                 @update:checked="formData.auto_read_receipt = $event"
-              />
-            </div>
+            />
           </div>
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" size="sm" @click="isDialogOpen = false">Cancel</Button>
-          <Button size="sm" @click="saveAccount" :disabled="isSubmitting">
-            <Loader2 v-if="isSubmitting" class="h-4 w-4 mr-2 animate-spin" />
-            {{ editingAccount ? 'Update' : 'Create' }} Account
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </CrudFormDialog>
 
     <!-- Delete Confirmation Dialog -->
-    <AlertDialog v-model:open="deleteDialogOpen">
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete Account</AlertDialogTitle>
-          <AlertDialogDescription>
-            Are you sure you want to delete "{{ accountToDelete?.name }}"? This action cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction @click="confirmDelete" class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <DeleteConfirmDialog
+      v-model:open="deleteDialogOpen"
+      title="Delete Account"
+      :item-name="accountToDelete?.name"
+      @confirm="confirmDelete"
+    />
+
+    <BusinessProfileDialog
+        v-model:open="isProfileDialogOpen"
+        :account-id="profileAccount?.id || null"
+        :account-name="profileAccount?.name || ''"
+    />
   </div>
 </template>

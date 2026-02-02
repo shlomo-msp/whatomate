@@ -39,16 +39,27 @@ type PermissionResponse struct {
 
 // ListRoles returns all roles for the organization
 func (a *App) ListRoles(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+
+	pg := parsePagination(r)
+	search := string(r.RequestCtx.QueryArgs().Peek("search"))
+
+	baseQuery := a.ScopeToOrg(a.DB, userID, orgID)
+	if search != "" {
+		baseQuery = baseQuery.Where("name ILIKE ?", "%"+search+"%")
+	}
+
+	// Get total count
+	var total int64
+	baseQuery.Model(&models.CustomRole{}).Count(&total)
 
 	var roles []models.CustomRole
-	if err := a.ScopeToOrg(a.DB, userID, orgID).
+	if err := pg.Apply(baseQuery.
 		Preload("Permissions").
-		Order("is_system DESC, name ASC").
+		Order("is_system DESC, name ASC")).
 		Find(&roles).Error; err != nil {
 		a.Log.Error("Failed to list roles", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list roles", nil, "")
@@ -64,6 +75,9 @@ func (a *App) ListRoles(r *fastglue.Request) error {
 
 	return r.SendEnvelope(map[string]interface{}{
 		"roles": response,
+		"total": total,
+		"page":  pg.Page,
+		"limit": pg.Limit,
 	})
 }
 
@@ -100,8 +114,8 @@ func (a *App) CreateRole(r *fastglue.Request) error {
 	}
 
 	var req RoleRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -168,8 +182,8 @@ func (a *App) UpdateRole(r *fastglue.Request) error {
 
 	// System roles can only have their description updated
 	var req RoleRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	if role.IsSystem {

@@ -71,20 +71,31 @@ type ChangePasswordRequest struct {
 
 // ListUsers returns all users for the organization
 func (a *App) ListUsers(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !a.HasPermission(userID, models.ResourceUsers, models.ActionRead) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	if err := a.requirePermission(r, userID, models.ResourceUsers, models.ActionRead); err != nil {
+		return nil
 	}
 
+	pg := parsePagination(r)
+	search := string(r.RequestCtx.QueryArgs().Peek("search"))
+
+	baseQuery := a.ScopeToOrg(a.DB, userID, orgID)
+	if search != "" {
+		baseQuery = baseQuery.Where("full_name ILIKE ? OR email ILIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+
+	// Get total count
+	var total int64
+	baseQuery.Model(&models.User{}).Count(&total)
+
 	var users []models.User
-	if err := a.ScopeToOrg(a.DB, userID, orgID).
+	if err := pg.Apply(baseQuery.
 		Preload("Role").
-		Order("created_at DESC").
+		Order("created_at DESC")).
 		Find(&users).Error; err != nil {
 		a.Log.Error("Failed to list users", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list users", nil, "")
@@ -98,6 +109,9 @@ func (a *App) ListUsers(r *fastglue.Request) error {
 
 	return r.SendEnvelope(map[string]interface{}{
 		"users": response,
+		"total": total,
+		"page":  pg.Page,
+		"limit": pg.Limit,
 	})
 }
 
@@ -108,10 +122,9 @@ func (a *App) GetUser(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	idStr := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(idStr)
+	id, err := parsePathUUID(r, "id", "user")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid user ID", nil, "")
+		return nil
 	}
 
 	var user models.User
@@ -126,19 +139,18 @@ func (a *App) GetUser(r *fastglue.Request) error {
 
 // CreateUser creates a new user (admin only)
 func (a *App) CreateUser(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !a.HasPermission(userID, models.ResourceUsers, models.ActionWrite) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	if err := a.requirePermission(r, userID, models.ResourceUsers, models.ActionWrite); err != nil {
+		return nil
 	}
 
 	var req UserRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -217,13 +229,9 @@ func (a *App) UpdateUser(r *fastglue.Request) error {
 
 	currentUserID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
-	idStr, ok := r.RequestCtx.UserValue("id").(string)
-	if !ok || idStr == "" {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Missing user ID", nil, "")
-	}
-	id, err := uuid.Parse(idStr)
+	id, err := parsePathUUID(r, "id", "user")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid user ID", nil, "")
+		return nil
 	}
 
 	// Users can update themselves, others need users:write permission
@@ -341,10 +349,9 @@ func (a *App) DeleteUser(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
 	}
 
-	idStr := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(idStr)
+	id, err := parsePathUUID(r, "id", "user")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid user ID", nil, "")
+		return nil
 	}
 
 	// Prevent user from deleting themselves
@@ -441,8 +448,8 @@ func (a *App) UpdateCurrentUserSettings(r *fastglue.Request) error {
 	}
 
 	var req UserSettingsRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Initialize settings if nil
@@ -479,8 +486,8 @@ func (a *App) ChangePassword(r *fastglue.Request) error {
 	}
 
 	var req ChangePasswordRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -565,13 +572,8 @@ type AvailabilityRequest struct {
 
 // UpdateAvailability updates the current user's availability status (away/available)
 func (a *App) UpdateAvailability(r *fastglue.Request) error {
-	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !ok {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
-	}
-
-	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if !ok {
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
@@ -581,8 +583,8 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 	}
 
 	var req AvailabilityRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Only log if status is actually changing

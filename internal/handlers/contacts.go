@@ -79,12 +79,15 @@ type ReactionInfo struct {
 // ListContacts returns all contacts for the organization
 // Users without contacts:read permission only see contacts assigned to them
 func (a *App) ListContacts(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 
 	// Pagination
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
+	tagsParam := string(r.RequestCtx.QueryArgs().Peek("tags"))
 
 	var contacts []models.Contact
 	query := a.ScopeToOrg(a.DB, userID, orgID)
@@ -97,6 +100,25 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 	if search != "" {
 		searchPattern := "%" + search + "%"
 		query = query.Where("phone_number LIKE ? OR profile_name LIKE ?", searchPattern, searchPattern)
+	}
+
+	// Filter by tags (comma-separated, matches contacts that have ANY of the specified tags)
+	if tagsParam != "" {
+		tagList := strings.Split(tagsParam, ",")
+		// Trim whitespace from each tag and build OR conditions
+		// Using @> operator which leverages the GIN index on tags
+		conditions := make([]string, 0, len(tagList))
+		args := make([]any, 0, len(tagList))
+		for _, tag := range tagList {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				conditions = append(conditions, "tags @> ?")
+				args = append(args, fmt.Sprintf(`[%q]`, tag)) // JSON array: ["tagname"]
+			}
+		}
+		if len(conditions) > 0 {
+			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
+		}
 	}
 
 	// Order by last message time (most recent first)
@@ -166,8 +188,10 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 // GetContact returns a single contact
 // Users without contacts:read permission can only access contacts assigned to them
 func (a *App) GetContact(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 	contactID, err := parsePathUUID(r, "id", "contact")
 	if err != nil {
 		return nil
@@ -231,8 +255,10 @@ func (a *App) GetContact(r *fastglue.Request) error {
 // Agents can only access messages for their assigned contacts
 // Supports cursor-based pagination with before_id for loading older messages
 func (a *App) GetMessages(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 	contactID, err := parsePathUUID(r, "id", "contact")
 	if err != nil {
 		return nil
@@ -436,11 +462,7 @@ func (a *App) markMessagesAsRead(orgID uuid.UUID, contactID uuid.UUID, contact *
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 
-					waAccount := &whatsapp.Account{
-						PhoneID:     account.PhoneID,
-						AccessToken: account.AccessToken,
-						APIVersion:  a.Config.WhatsApp.APIVersion,
-					}
+					waAccount := a.toWhatsAppAccount(&account)
 					for _, msg := range unreadMessages {
 						// Check if context was cancelled
 						if ctx.Err() != nil {
@@ -489,8 +511,10 @@ type ButtonContent struct {
 // SendMessage sends a message to a contact
 // Agents can only send messages to their assigned contacts
 func (a *App) SendMessage(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 	contactID, err := parsePathUUID(r, "id", "contact")
 	if err != nil {
 		return nil
@@ -626,8 +650,10 @@ func truncateString(s string, maxLen int) string {
 
 // SendMediaMessage sends a media message (image, document, video, audio) to a contact
 func (a *App) SendMediaMessage(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 
 	// Parse multipart form
 	form, err := r.RequestCtx.MultipartForm()
@@ -807,8 +833,10 @@ type SendReactionRequest struct {
 
 // SendReaction sends a reaction to a message
 func (a *App) SendReaction(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 	contactID, err := parsePathUUID(r, "id", "contact")
 	if err != nil {
 		return nil
@@ -993,12 +1021,10 @@ type AssignContactRequest struct {
 // AssignContact assigns a contact to a user (agent)
 // Only users with write permission can assign contacts
 func (a *App) AssignContact(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 
 	// Only users with write permission can assign contacts
 	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
@@ -1011,8 +1037,8 @@ func (a *App) AssignContact(r *fastglue.Request) error {
 	}
 
 	var req AssignContactRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Get contact
@@ -1053,8 +1079,10 @@ type ContactSessionDataResponse struct {
 // GetContactSessionData returns session data and panel configuration for a contact
 // Used by the contact info panel in the chat view
 func (a *App) GetContactSessionData(r *fastglue.Request) error {
-	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 	contactID, err := parsePathUUID(r, "id", "contact")
 	if err != nil {
 		return nil
@@ -1139,4 +1167,70 @@ func (a *App) GetContactSessionData(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(response)
+}
+
+// UpdateContactTagsRequest represents the request body for updating contact tags
+type UpdateContactTagsRequest struct {
+	Tags []string `json:"tags"`
+}
+
+// UpdateContactTags updates the tags on a contact
+func (a *App) UpdateContactTags(r *fastglue.Request) error {
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	// Check permission - need contacts:write to update tags on contacts
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to update contact tags", nil, "")
+	}
+
+	contactID, err := parsePathUUID(r, "id", "contact")
+	if err != nil {
+		return nil
+	}
+
+	var req UpdateContactTagsRequest
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
+	}
+
+	// Get contact
+	contact, err := findByIDAndOrg[models.Contact](a.DB, r, contactID, orgID, "Contact")
+	if err != nil {
+		return nil
+	}
+
+	// Convert tags to JSONBArray
+	tagsArray := make(models.JSONBArray, len(req.Tags))
+	for i, tag := range req.Tags {
+		tagsArray[i] = tag
+	}
+
+	// Update contact tags
+	if err := a.DB.Model(contact).Update("tags", tagsArray).Error; err != nil {
+		a.Log.Error("Failed to update contact tags", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update contact tags", nil, "")
+	}
+
+	// Reload contact to get updated tags
+	if err := a.DB.First(contact, contactID).Error; err != nil {
+		a.Log.Error("Failed to reload contact", "error", err)
+	}
+
+	// Build response with tag details
+	tags := []string{}
+	if contact.Tags != nil {
+		for _, t := range contact.Tags {
+			if s, ok := t.(string); ok {
+				tags = append(tags, s)
+			}
+		}
+	}
+
+	return r.SendEnvelope(map[string]any{
+		"message": "Contact tags updated",
+		"tags":    tags,
+	})
 }

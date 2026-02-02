@@ -18,6 +18,10 @@ export class AccountsPage extends BasePage {
     this.alertDialog = page.locator('[role="alertdialog"]')
   }
 
+  get profileDialog() {
+    return this.page.locator('[role="dialog"][data-state="open"]').filter({ hasText: 'Business Profile' })
+  }
+
   async goto() {
     await this.page.goto('/settings/accounts')
     await this.page.waitForLoadState('networkidle')
@@ -58,7 +62,7 @@ export class AccountsPage extends BasePage {
 
   // Card helpers
   getAccountCard(name: string): Locator {
-    return this.page.locator('.rounded-lg.border').filter({ hasText: name })
+    return this.page.locator('.account-card').filter({ hasText: name })
   }
 
   async editAccount(name: string) {
@@ -78,9 +82,22 @@ export class AccountsPage extends BasePage {
     await this.alertDialog.waitFor({ state: 'visible' })
   }
 
+  async openBusinessProfile(name: string) {
+    const card = this.getAccountCard(name)
+    await expect(card).toBeVisible({ timeout: 10000 })
+    // Profile button has svg with text-emerald-500 class
+    await card.locator('button').filter({ has: this.page.locator('svg.text-emerald-500') }).click()
+    await this.profileDialog.waitFor({ state: 'visible' })
+  }
+
   async testConnection(name: string) {
     const card = this.getAccountCard(name)
     await card.getByRole('button', { name: /Test/i }).click()
+  }
+
+  async subscribeApp(name: string) {
+    const card = this.getAccountCard(name)
+    await card.getByRole('button', { name: /Subscribe/i }).click()
   }
 
   async copyWebhookUrl(name: string) {
@@ -121,6 +138,12 @@ export class AccountsPage extends BasePage {
 
   async expectDialogVisible() {
     await expect(this.dialog).toBeVisible()
+  }
+
+  async expectProfileDialogVisible() {
+    await expect(this.profileDialog).toBeVisible()
+    await expect(this.profileDialog.locator('input#about')).toBeVisible()
+    await expect(this.profileDialog.locator('textarea#description')).toBeVisible()
   }
 
   async expectDialogHidden() {

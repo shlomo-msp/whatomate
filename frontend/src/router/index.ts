@@ -135,6 +135,12 @@ const router = createRouter({
           meta: { permission: 'analytics.agents' }
         },
         {
+          path: 'analytics/meta-insights',
+          name: 'meta-insights',
+          component: () => import('@/views/analytics/MetaInsightsView.vue'),
+          meta: { permission: 'analytics' }
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/settings/SettingsView.vue'),
@@ -157,6 +163,12 @@ const router = createRouter({
           name: 'canned-responses',
           component: () => import('@/views/settings/CannedResponsesView.vue'),
           meta: { permission: 'canned_responses' }
+        },
+        {
+          path: 'settings/tags',
+          name: 'tags',
+          component: () => import('@/views/settings/TagsView.vue'),
+          meta: { permission: 'tags' }
         },
         {
           path: 'settings/users',
@@ -223,6 +235,7 @@ const navigationOrder = [
   ]},
   { path: '/chatbot/transfers', permission: 'transfers' },
   { path: '/analytics/agents', permission: 'analytics.agents' },
+  { path: '/analytics/meta-insights', permission: 'analytics' },
   { path: '/templates', permission: 'templates' },
   { path: '/flows', permission: 'flows.whatsapp' },
   { path: '/campaigns', permission: 'campaigns' },
@@ -231,6 +244,7 @@ const navigationOrder = [
     { path: '/settings/chatbot', permission: 'settings.chatbot' },
     { path: '/settings/accounts', permission: 'accounts' },
     { path: '/settings/canned-responses', permission: 'canned_responses' },
+    { path: '/settings/tags', permission: 'tags' },
     { path: '/settings/teams', permission: 'teams' },
     { path: '/settings/users', permission: 'users' },
     { path: '/settings/roles', permission: 'roles' },

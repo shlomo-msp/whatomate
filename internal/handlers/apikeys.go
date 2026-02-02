@@ -50,23 +50,28 @@ func generateAPIKey() (string, error) {
 
 // ListAPIKeys returns all API keys for the organization
 func (a *App) ListAPIKeys(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !a.HasPermission(userID, models.ResourceAPIKeys, models.ActionRead) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionRead); err != nil {
+		return nil
 	}
 
+	pg := parsePagination(r)
+
+	var total int64
+	a.DB.Model(&models.APIKey{}).Where("organization_id = ?", orgID).Count(&total)
+
 	var apiKeys []models.APIKey
-	if err := a.DB.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&apiKeys).Error; err != nil {
+	if err := pg.Apply(a.DB.Where("organization_id = ?", orgID).
+		Order("created_at DESC")).
+		Find(&apiKeys).Error; err != nil {
 		a.Log.Error("Failed to list API keys", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list API keys", nil, "")
 	}
 
-	// Convert to response format
 	response := make([]APIKeyResponse, len(apiKeys))
 	for i, key := range apiKeys {
 		response[i] = APIKeyResponse{
@@ -80,24 +85,28 @@ func (a *App) ListAPIKeys(r *fastglue.Request) error {
 		}
 	}
 
-	return r.SendEnvelope(response)
+	return r.SendEnvelope(map[string]any{
+		"api_keys": response,
+		"total":    total,
+		"page":     pg.Page,
+		"limit":    pg.Limit,
+	})
 }
 
 // CreateAPIKey creates a new API key
 func (a *App) CreateAPIKey(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !a.HasPermission(userID, models.ResourceAPIKeys, models.ActionWrite) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionWrite); err != nil {
+		return nil
 	}
 
 	var req APIKeyRequest
-	if err := r.Decode(&req, "json"); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
 	}
 
 	// Validate required fields
@@ -160,20 +169,18 @@ func (a *App) CreateAPIKey(r *fastglue.Request) error {
 
 // DeleteAPIKey revokes an API key
 func (a *App) DeleteAPIKey(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
-	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
-	if !a.HasPermission(userID, models.ResourceAPIKeys, models.ActionDelete) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionDelete); err != nil {
+		return nil
 	}
 
-	idStr := r.RequestCtx.UserValue("id").(string)
-	id, err := uuid.Parse(idStr)
+	id, err := parsePathUUID(r, "id", "API key")
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid API key ID", nil, "")
+		return nil
 	}
 
 	result := a.DB.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.APIKey{})
