@@ -1002,9 +1002,11 @@ async function loadMediaForMessage(message: Message) {
     }
 
     const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
+    const selectedOrgId = localStorage.getItem('selected_organization_id')
     const response = await fetch(`${basePath}/api/media/${message.id}`, {
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
+        ...(selectedOrgId ? { 'X-Organization-ID': selectedOrgId } : {})
       }
     })
 
