@@ -99,7 +99,8 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		query = query.Where("phone_number LIKE ? OR profile_name LIKE ?", searchPattern, searchPattern)
+		// Use ILIKE for case-insensitive search on profile_name
+		query = query.Where("phone_number LIKE ? OR profile_name ILIKE ?", searchPattern, searchPattern)
 	}
 
 	// Filter by tags (comma-separated, matches contacts that have ANY of the specified tags)
@@ -112,8 +113,9 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		for _, tag := range tagList {
 			tag = strings.TrimSpace(tag)
 			if tag != "" {
-				conditions = append(conditions, "tags @> ?")
-				args = append(args, fmt.Sprintf(`[%q]`, tag)) // JSON array: ["tagname"]
+				// Use proper JSONB containment with explicit cast
+				conditions = append(conditions, "tags @> ?::jsonb")
+				args = append(args, fmt.Sprintf(`["%s"]`, tag)) // JSON array: ["tagname"]
 			}
 		}
 		if len(conditions) > 0 {

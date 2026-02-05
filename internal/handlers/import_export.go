@@ -221,9 +221,10 @@ func (a *App) ExportData(r *fastglue.Request) error {
 		searchPattern := "%" + search + "%"
 		switch req.Table {
 		case "contacts":
-			query = query.Where("phone_number LIKE ? OR profile_name LIKE ?", searchPattern, searchPattern)
+			// Use ILIKE for case-insensitive search on profile_name
+			query = query.Where("phone_number LIKE ? OR profile_name ILIKE ?", searchPattern, searchPattern)
 		case "tags":
-			query = query.Where("name LIKE ? OR description LIKE ?", searchPattern, searchPattern)
+			query = query.Where("name ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
 		}
 	}
 
@@ -234,8 +235,9 @@ func (a *App) ExportData(r *fastglue.Request) error {
 		for _, tag := range tagList {
 			tag = strings.TrimSpace(tag)
 			if tag != "" {
-				conditions = append(conditions, "tags @> ?")
-				args = append(args, fmt.Sprintf(`[%q]`, tag))
+				// Use proper JSONB containment with explicit cast
+				conditions = append(conditions, "tags @> ?::jsonb")
+				args = append(args, fmt.Sprintf(`["%s"]`, tag))
 			}
 		}
 		if len(conditions) > 0 {
