@@ -98,6 +98,10 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 	}
 
 	if search != "" {
+		// Limit search string length to prevent abuse
+		if len(search) > 1000 {
+			search = search[:1000]
+		}
 		searchPattern := "%" + search + "%"
 		// Use ILIKE for case-insensitive search on profile_name
 		query = query.Where("phone_number LIKE ? OR profile_name ILIKE ?", searchPattern, searchPattern)
@@ -115,7 +119,8 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			if tag != "" {
 				// Use proper JSONB containment with explicit cast
 				conditions = append(conditions, "tags @> ?::jsonb")
-				args = append(args, fmt.Sprintf(`["%s"]`, tag)) // JSON array: ["tagname"]
+				tagJSON, _ := json.Marshal([]string{tag})
+				args = append(args, string(tagJSON))
 			}
 		}
 		if len(conditions) > 0 {
@@ -541,7 +546,7 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 	// Get WhatsApp account
 	account, err := a.resolveWhatsAppAccount(orgID, contact.WhatsAppAccount)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Failed to resolve WhatsApp account", nil, "")
 	}
 
 	// Handle reply context
