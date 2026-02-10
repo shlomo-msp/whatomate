@@ -36,7 +36,6 @@ func parseSuperAdminField(r *fastglue.Request) *bool {
 	}
 	return f.IsSuperAdmin
 }
-}
 
 // UserResponse represents the response for a user (without sensitive data)
 type UserResponse struct {
