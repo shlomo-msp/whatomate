@@ -145,7 +145,7 @@ func (a *App) ListWidgets(r *fastglue.Request) error {
 	}
 
 	// Check analytics read permission
-	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You don't have permission to view analytics", nil, "")
 	}
 
@@ -178,7 +178,7 @@ func (a *App) GetWidget(r *fastglue.Request) error {
 	}
 
 	// Check analytics read permission
-	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionRead, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You don't have permission to view analytics", nil, "")
 	}
 
@@ -206,7 +206,7 @@ func (a *App) CreateWidget(r *fastglue.Request) error {
 	}
 
 	// Check analytics write permission
-	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You don't have permission to create widgets", nil, "")
 	}
 
@@ -364,7 +364,7 @@ func (a *App) UpdateWidget(r *fastglue.Request) error {
 	}
 
 	// Check analytics write permission
-	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You don't have permission to edit widgets", nil, "")
 	}
 
@@ -487,7 +487,7 @@ func (a *App) DeleteWidget(r *fastglue.Request) error {
 	}
 
 	// Check analytics delete permission
-	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionDelete) {
+	if !a.HasPermission(userID, models.ResourceAnalytics, models.ActionDelete, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You don't have permission to delete widgets", nil, "")
 	}
 
@@ -1014,6 +1014,18 @@ func (a *App) getGroupedData(orgID uuid.UUID, widget models.Widget, filters []Fi
 
 	tableName, dateField, ok := resolveDataSourceTable(widget.DataSource)
 	if !ok {
+		return dataPoints
+	}
+
+	// Validate GroupByField against whitelist to prevent SQL injection
+	allowedGroupByFields := map[string]bool{
+		"status": true, "message_status": true, "direction": true,
+		"message_type": true, "assigned_user_id": true, "channel": true,
+		"is_active": true, "priority": true, "category": true,
+		"type": true, "action_type": true, "provider": true,
+	}
+	if !allowedGroupByFields[widget.GroupByField] {
+		a.Log.Error("Invalid GroupByField", "field", widget.GroupByField)
 		return dataPoints
 	}
 

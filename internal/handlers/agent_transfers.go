@@ -105,7 +105,7 @@ func (a *App) ListAgentTransfers(r *fastglue.Request) error {
 	}
 
 	// Check permissions - users with write permission have full access (like admin)
-	hasFullAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite)
+	hasFullAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite, orgID)
 
 	// Query params
 	status := string(r.RequestCtx.QueryArgs().Peek("status"))
@@ -115,7 +115,7 @@ func (a *App) ListAgentTransfers(r *fastglue.Request) error {
 	limit := 100 // Default limit
 	offset := 0
 	if limitStr := string(r.RequestCtx.QueryArgs().Peek("limit")); limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 500 {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
 			limit = parsed
 		}
 	}
@@ -690,7 +690,7 @@ func (a *App) AssignAgentTransfer(r *fastglue.Request) error {
 	}
 
 	// Check permissions - users with write permission can assign transfers to others
-	hasWriteAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite)
+	hasWriteAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite, orgID)
 
 	transferID, err := parsePathUUID(r, "id", "transfer")
 	if err != nil {
@@ -830,8 +830,8 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	}
 
 	// Check permissions - users with write permission have full access
-	hasFullAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite)
-	hasPickupPermission := a.HasPermission(userID, models.ResourceTransfers, models.ActionPickup)
+	hasFullAccess := a.HasPermission(userID, models.ResourceTransfers, models.ActionWrite, orgID)
+	hasPickupPermission := a.HasPermission(userID, models.ResourceTransfers, models.ActionPickup, orgID)
 
 	// Check if agent queue pickup is allowed (use cache)
 	settings, _ := a.getChatbotSettingsCached(orgID, "")
@@ -1048,11 +1048,18 @@ func (a *App) broadcastTransferCreated(transfer *models.AgentTransfer, contact *
 		return
 	}
 
+	contactName := contact.ProfileName
+	phoneNumber := transfer.PhoneNumber
+	if a.ShouldMaskPhoneNumbers(transfer.OrganizationID) {
+		contactName = MaskIfPhoneNumber(contactName)
+		phoneNumber = MaskPhoneNumber(phoneNumber)
+	}
+
 	payload := map[string]any{
 		"id":               transfer.ID.String(),
 		"contact_id":       transfer.ContactID.String(),
-		"contact_name":     contact.ProfileName,
-		"phone_number":     transfer.PhoneNumber,
+		"contact_name":     contactName,
+		"phone_number":     phoneNumber,
 		"whatsapp_account": transfer.WhatsAppAccount,
 		"status":           transfer.Status,
 		"source":           transfer.Source,

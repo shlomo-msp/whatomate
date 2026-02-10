@@ -83,38 +83,18 @@ import {
   Globe,
   Code,
   RotateCw,
-  Filter
+  Filter,
+  StickyNote
 } from 'lucide-vue-next'
-import { getInitials } from '@/lib/utils'
+import { getInitials, getAvatarGradient } from '@/lib/utils'
 import { useColorMode } from '@/composables/useColorMode'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import CannedResponsePicker from '@/components/chat/CannedResponsePicker.vue'
 import ContactInfoPanel from '@/components/chat/ContactInfoPanel.vue'
+import ConversationNotes from '@/components/chat/ConversationNotes.vue'
+import { useNotesStore } from '@/stores/notes'
 import { CreateContactDialog } from '@/components/shared'
 import { Info } from 'lucide-vue-next'
-
-// Avatar gradient colors - consistent per contact based on name hash
-const avatarGradients = [
-  'from-violet-500 to-purple-600',
-  'from-blue-500 to-cyan-600',
-  'from-rose-500 to-pink-600',
-  'from-amber-500 to-orange-600',
-  'from-emerald-500 to-teal-600',
-  'from-indigo-500 to-blue-600',
-  'from-fuchsia-500 to-purple-600',
-  'from-cyan-500 to-blue-600',
-  'from-orange-500 to-red-600',
-  'from-teal-500 to-emerald-600',
-]
-
-function getAvatarGradient(name: string): string {
-  if (!name) return avatarGradients[0]
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return avatarGradients[Math.abs(hash) % avatarGradients.length]
-}
 
 const { t } = useI18n()
 const route = useRoute()
@@ -124,6 +104,7 @@ const authStore = useAuthStore()
 const usersStore = useUsersStore()
 const transfersStore = useTransfersStore()
 const tagsStore = useTagsStore()
+const notesStore = useNotesStore()
 const { isDark } = useColorMode()
 
 const canWriteContacts = authStore.hasPermission('contacts', 'write')
@@ -136,6 +117,7 @@ const isAssignDialogOpen = ref(false)
 const isTransferring = ref(false)
 const isResuming = ref(false)
 const isInfoPanelOpen = ref(false)
+const isNotesPanelOpen = ref(false)
 const contactSessionData = ref<any>(null)
 
 // File upload state
@@ -300,29 +282,8 @@ async function executeCustomAction(action: CustomAction) {
     const response = await customActionsService.execute(action.id, contactsStore.currentContact.id)
     let result: ActionResult = (response.data as any).data || response.data
 
-    // Handle JavaScript action - execute code in frontend
-    if (result.data?.code && result.data?.context) {
-      try {
-        // Create a function from the code and execute with context
-        const context = result.data.context
-        const code = result.data.code
-        // The code should return an object like: { toast: {...}, clipboard: '...', url: '...' }
-        const fn = new Function('context', 'contact', 'user', 'organization', code)
-        const jsResult = fn(context, context.contact, context.user, context.organization)
-
-        // Merge JS result into action result
-        if (jsResult) {
-          if (jsResult.toast) result.toast = jsResult.toast
-          if (jsResult.clipboard) result.clipboard = jsResult.clipboard
-          if (jsResult.url) result.redirect_url = jsResult.url
-          if (jsResult.message) result.message = jsResult.message
-        }
-      } catch (jsError: any) {
-        console.error('JavaScript action error:', jsError)
-        toast.error(t('chat.jsError') + ': ' + jsError.message)
-        return
-      }
-    }
+    // JavaScript actions are now executed server-side via goja.
+    // The response already contains structured result fields (toast, clipboard, redirect_url, message).
 
     // Handle different result types
     if (result.redirect_url) {
@@ -332,7 +293,14 @@ async function executeCustomAction(action: CustomAction) {
         const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
         redirectUrl = basePath + redirectUrl
       }
-      window.open(redirectUrl, '_blank')
+      try {
+        const parsed = new URL(redirectUrl, window.location.origin)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          window.open(parsed.href, '_blank')
+        }
+      } catch {
+        // Invalid URL, ignore
+      }
     }
 
     if (result.clipboard) {
@@ -419,6 +387,7 @@ onUnmounted(() => {
   wsService.setCurrentContact(null)
   // Clear current contact when leaving chat view so notifications work on other pages
   contactsStore.setCurrentContact(null)
+  notesStore.clearNotes()
   // Clean up blob URLs to prevent memory leaks
   Object.values(mediaBlobUrls.value).forEach(url => {
     URL.revokeObjectURL(url)
@@ -465,11 +434,13 @@ function updateStickyDate(scrollContainer: HTMLElement) {
 // Watch for route changes
 watch(contactId, async (newId) => {
   if (newId) {
+    notesStore.clearNotes()
     await selectContact(newId)
   } else {
     wsService.setCurrentContact(null)
     contactsStore.setCurrentContact(null)
     contactsStore.clearMessages()
+    notesStore.clearNotes()
   }
 })
 
@@ -497,6 +468,9 @@ async function selectContact(id: string) {
       // Setup scroll listener for infinite scroll after initial scroll
       messagesScroll.setup()
     }, 50)
+
+    // Fetch notes for badge count
+    notesStore.fetchNotes(id)
 
     // Fetch session data and auto-open panel if configured
     try {
@@ -1015,19 +989,15 @@ async function loadMediaForMessage(message: Message) {
   mediaLoadingStates.value[message.id] = true
 
   try {
-    const token = authStore.token
-    if (!token) {
-      console.error('No auth token available')
-      return
-    }
-
     const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
     const selectedOrgId = localStorage.getItem('selected_organization_id')
+    const headers: Record<string, string> = {}
+    if (selectedOrgId) {
+      headers['X-Organization-ID'] = selectedOrgId
+    }
     const response = await fetch(`${basePath}/api/media/${message.id}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        ...(selectedOrgId ? { 'X-Organization-ID': selectedOrgId } : {})
-      }
+      credentials: 'include',
+      headers
     })
 
     if (!response.ok) {
@@ -1149,18 +1119,15 @@ async function sendMediaMessage() {
       formData.append('caption', mediaCaption.value.trim())
     }
 
-    const token = authStore.token
-    if (!token) {
-      toast.error(t('errors.unauthorized'))
-      return
-    }
+    // Read CSRF token for mutating request
+    const csrfMatch = document.cookie.match(/(?:^|; )whm_csrf=([^;]*)/)
+    const csrfToken = csrfMatch ? decodeURIComponent(csrfMatch[1]) : ''
 
     const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
     const response = await fetch(`${basePath}/api/messages/media`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
+      credentials: 'include',
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
       body: formData
     })
 
@@ -1421,6 +1388,29 @@ async function sendMediaMessage() {
                 <Button
                   variant="ghost"
                   size="icon"
+                  id="notes-button"
+                  class="h-8 w-8 relative text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
+                  :class="isNotesPanelOpen && 'bg-amber-500/10 text-amber-400 light:bg-amber-50 light:text-amber-600'"
+                  @click="isNotesPanelOpen = !isNotesPanelOpen"
+                >
+                  <StickyNote class="h-4 w-4" />
+                  <span
+                    v-if="notesStore.notes.length > 0 && !isNotesPanelOpen"
+                    id="notes-badge"
+                    class="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-amber-500 text-[10px] text-white flex items-center justify-center px-1"
+                  >
+                    {{ notesStore.notes.length }}
+                  </span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ $t('chat.internalNotes') }}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  id="info-button"
                   class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
                   :class="isInfoPanelOpen && 'bg-white/[0.08] text-white light:bg-gray-100 light:text-gray-900'"
                   @click="isInfoPanelOpen = !isInfoPanelOpen"
@@ -1907,6 +1897,13 @@ async function sendMediaMessage() {
         </div>
       </template>
     </div>
+
+    <!-- Notes Side Panel -->
+    <ConversationNotes
+      v-if="contactsStore.currentContact && isNotesPanelOpen"
+      :contact-id="contactsStore.currentContact.id"
+      @close="isNotesPanelOpen = false"
+    />
 
     <!-- Contact Info Panel -->
     <ContactInfoPanel

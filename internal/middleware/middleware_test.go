@@ -87,19 +87,23 @@ func TestCORS(t *testing.T) {
 				req.RequestCtx.Request.Header.Set("Origin", tt.origin)
 			}
 
-			corsMiddleware := middleware.CORS(tt.allowlist)
+			allowed := map[string]bool{}
+			for _, o := range tt.allowlist {
+				allowed[o] = true
+			}
+			corsMiddleware := middleware.CORS(allowed)
 			result := corsMiddleware(req)
 
 			require.NotNil(t, result, "CORS middleware should return request")
 
 			// Check CORS headers
-			gotOrigin := string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Origin"))
-			assert.Equal(t, tt.wantOrigin, gotOrigin)
-			if tt.wantOrigin != "" {
-				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "GET")
-				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "POST")
-				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "Authorization")
-				assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "X-API-Key")
+			assert.Equal(t, tt.wantOrigin, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Origin")))
+			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "GET")
+			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Methods")), "POST")
+			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "Authorization")
+			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "X-API-Key")
+			assert.Contains(t, string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Headers")), "X-Organization-ID")
+			if tt.origin != "" {
 				assert.Equal(t, "true", string(result.RequestCtx.Response.Header.Peek("Access-Control-Allow-Credentials")))
 			}
 		})
@@ -536,7 +540,7 @@ func TestAuth_MultipleMiddlewareChain(t *testing.T) {
 	req.RequestCtx.Request.Header.Set("Origin", "https://example.com")
 
 	// Apply CORS first
-	corsMiddleware := middleware.CORS([]string{"https://example.com"})
+	corsMiddleware := middleware.CORS(map[string]bool{"https://example.com": true})
 	req = corsMiddleware(req)
 	require.NotNil(t, req)
 
