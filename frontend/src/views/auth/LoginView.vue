@@ -170,8 +170,8 @@ const handleVerifyTwoFASetup = async () => {
 }
 
 const initiateSSO = (provider: string) => {
-  const baseUrl = import.meta.env.VITE_API_URL || ''
-  window.location.href = `${baseUrl}/auth/sso/${provider}/init`
+  const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
+  window.location.href = `${basePath}/api/auth/sso/${provider}/init`
 }
 </script>
 
