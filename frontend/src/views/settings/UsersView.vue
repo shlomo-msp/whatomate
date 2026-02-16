@@ -217,7 +217,8 @@ async function submitAddExisting() {
 
 function copyInviteLink() {
   const orgId = organizationsStore.selectedOrgId || authStore.organizationId
-  const url = `${window.location.origin}/register?org=${orgId}`
+  const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
+  const url = `${window.location.origin}${basePath}/register?org=${orgId}`
   navigator.clipboard.writeText(url)
   toast.success(t('users.inviteLinkCopied'))
 }
