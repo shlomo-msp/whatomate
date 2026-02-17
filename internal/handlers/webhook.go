@@ -297,6 +297,13 @@ func (a *App) processIncomingMessage(phoneNumberID string, msg interface{}, prof
 		return
 	}
 
+	// Extract media info dynamically based on message.type and nested object.
+	if mediaID, mime, filename := extractMediaFromRaw(msgBytes); mediaID != "" {
+		textMsg.MediaIDOverride = mediaID
+		textMsg.MediaMimeTypeOverride = mime
+		textMsg.MediaFilenameOverride = filename
+	}
+
 	// Check for duplicate message - Meta sometimes sends the same message multiple times
 	if textMsg.ID != "" {
 		var existingMsg models.Message
@@ -308,6 +315,29 @@ func (a *App) processIncomingMessage(phoneNumberID string, msg interface{}, prof
 
 	// Process the message with chatbot logic
 	a.processIncomingMessageFull(phoneNumberID, textMsg, profileName)
+}
+
+// extractMediaFromRaw inspects the raw webhook message and returns media_id/id for any type.
+func extractMediaFromRaw(msgBytes []byte) (string, string, string) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(msgBytes, &raw); err != nil {
+		return "", "", ""
+	}
+	typeVal, _ := raw["type"].(string)
+	if typeVal == "" {
+		return "", "", ""
+	}
+	nested, ok := raw[typeVal].(map[string]interface{})
+	if !ok {
+		return "", "", ""
+	}
+	mediaID, _ := nested["media_id"].(string)
+	if mediaID == "" {
+		mediaID, _ = nested["id"].(string)
+	}
+	mime, _ := nested["mime_type"].(string)
+	filename, _ := nested["filename"].(string)
+	return mediaID, mime, filename
 }
 
 func (a *App) processStatusUpdate(phoneNumberID string, status WebhookStatus) {

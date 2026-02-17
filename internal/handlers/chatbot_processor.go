@@ -24,6 +24,10 @@ type IncomingTextMessage struct {
 	ID        string `json:"id"`
 	Timestamp string `json:"timestamp"`
 	Type      string `json:"type"`
+	// Media overrides extracted from raw webhook payload (supports unknown types)
+	MediaIDOverride       string `json:"-"`
+	MediaMimeTypeOverride string `json:"-"`
+	MediaFilenameOverride string `json:"-"`
 	Text      *struct {
 		Body string `json:"body"`
 	} `json:"text,omitempty"`
@@ -2269,6 +2273,9 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 // extractMediaFields returns media_id/mime/filename from any supported media payload.
 // This allows storing media_id even if the message type isn't handled yet.
 func extractMediaFields(msg IncomingTextMessage) (string, string, string) {
+	if msg.MediaIDOverride != "" {
+		return msg.MediaIDOverride, msg.MediaMimeTypeOverride, msg.MediaFilenameOverride
+	}
 	if msg.Image != nil {
 		if msg.Image.MediaID != "" {
 			return msg.Image.MediaID, msg.Image.MimeType, ""
