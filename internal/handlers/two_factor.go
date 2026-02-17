@@ -283,11 +283,11 @@ func (a *App) VerifyTwoFALogin(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate token", nil, "")
 	}
 
-	return r.SendEnvelope(AuthResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    a.Config.JWT.AccessExpiryMins * 60,
-		User:         user,
+	a.setAuthCookies(r, accessToken, refreshToken)
+
+	return r.SendEnvelope(CookieAuthResponse{
+		ExpiresIn: a.Config.JWT.AccessExpiryMins * 60,
+		User:      user,
 	})
 }
 
