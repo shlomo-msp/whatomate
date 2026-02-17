@@ -138,6 +138,7 @@ type WebhookMessage struct {
 	Document    *WebhookMedia           `json:"document,omitempty"`
 	Audio       *WebhookMedia           `json:"audio,omitempty"`
 	Video       *WebhookMedia           `json:"video,omitempty"`
+	Sticker     *WebhookMedia           `json:"sticker,omitempty"`
 	Context     *WebhookMessageContext  `json:"context,omitempty"`
 }
 
@@ -177,8 +178,11 @@ type WebhookNFMReply struct {
 // WebhookMedia represents media in a message
 type WebhookMedia struct {
 	ID       string `json:"id"`
+	MediaID  string `json:"media_id,omitempty"`
 	MimeType string `json:"mime_type"`
 	SHA256   string `json:"sha256"`
+	URL      string `json:"url,omitempty"`
+	Animated bool   `json:"animated,omitempty"`
 	Caption  string `json:"caption,omitempty"`
 	Filename string `json:"filename,omitempty"`
 }

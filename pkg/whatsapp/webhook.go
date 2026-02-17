@@ -86,26 +86,51 @@ func (p *WebhookPayload) ExtractMessages() []ParsedMessage {
 					}
 				case "image":
 					if msg.Image != nil {
-						parsed.MediaID = msg.Image.ID
+						if msg.Image.MediaID != "" {
+							parsed.MediaID = msg.Image.MediaID
+						} else {
+							parsed.MediaID = msg.Image.ID
+						}
 						parsed.MediaMimeType = msg.Image.MimeType
 						parsed.Caption = msg.Image.Caption
 					}
 				case "document":
 					if msg.Document != nil {
-						parsed.MediaID = msg.Document.ID
+						if msg.Document.MediaID != "" {
+							parsed.MediaID = msg.Document.MediaID
+						} else {
+							parsed.MediaID = msg.Document.ID
+						}
 						parsed.MediaMimeType = msg.Document.MimeType
 						parsed.Caption = msg.Document.Caption
 					}
 				case "audio":
 					if msg.Audio != nil {
-						parsed.MediaID = msg.Audio.ID
+						if msg.Audio.MediaID != "" {
+							parsed.MediaID = msg.Audio.MediaID
+						} else {
+							parsed.MediaID = msg.Audio.ID
+						}
 						parsed.MediaMimeType = msg.Audio.MimeType
 					}
 				case "video":
 					if msg.Video != nil {
-						parsed.MediaID = msg.Video.ID
+						if msg.Video.MediaID != "" {
+							parsed.MediaID = msg.Video.MediaID
+						} else {
+							parsed.MediaID = msg.Video.ID
+						}
 						parsed.MediaMimeType = msg.Video.MimeType
 						parsed.Caption = msg.Video.Caption
+					}
+				case "sticker":
+					if msg.Sticker != nil {
+						if msg.Sticker.MediaID != "" {
+							parsed.MediaID = msg.Sticker.MediaID
+						} else {
+							parsed.MediaID = msg.Sticker.ID
+						}
+						parsed.MediaMimeType = msg.Sticker.MimeType
 					}
 				}
 

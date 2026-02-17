@@ -115,12 +115,14 @@ type WebhookPayload struct {
 					} `json:"text,omitempty"`
 					Image *struct {
 						ID       string `json:"id"`
+						MediaID  string `json:"media_id,omitempty"`
 						MimeType string `json:"mime_type"`
 						SHA256   string `json:"sha256"`
 						Caption  string `json:"caption,omitempty"`
 					} `json:"image,omitempty"`
 					Document *struct {
 						ID       string `json:"id"`
+						MediaID  string `json:"media_id,omitempty"`
 						MimeType string `json:"mime_type"`
 						SHA256   string `json:"sha256"`
 						Filename string `json:"filename"`
@@ -128,14 +130,24 @@ type WebhookPayload struct {
 					} `json:"document,omitempty"`
 					Audio *struct {
 						ID       string `json:"id"`
+						MediaID  string `json:"media_id,omitempty"`
 						MimeType string `json:"mime_type"`
 					} `json:"audio,omitempty"`
 					Video *struct {
 						ID       string `json:"id"`
+						MediaID  string `json:"media_id,omitempty"`
 						MimeType string `json:"mime_type"`
 						SHA256   string `json:"sha256"`
 						Caption  string `json:"caption,omitempty"`
 					} `json:"video,omitempty"`
+					Sticker *struct {
+						ID       string `json:"id"`
+						MediaID  string `json:"media_id,omitempty"`
+						MimeType string `json:"mime_type"`
+						SHA256   string `json:"sha256"`
+						URL      string `json:"url,omitempty"`
+						Animated bool   `json:"animated,omitempty"`
+					} `json:"sticker,omitempty"`
 					Interactive *struct {
 						Type        string `json:"type"`
 						ButtonReply *struct {
