@@ -46,6 +46,7 @@ type MessageResponse struct {
 	Direction        models.Direction     `json:"direction"`
 	MessageType      models.MessageType   `json:"message_type"`
 	Content          any                  `json:"content"`
+	MediaID          string               `json:"media_id,omitempty"`
 	MediaURL         string               `json:"media_url,omitempty"`
 	MediaMimeType    string               `json:"media_mime_type,omitempty"`
 	MediaFilename    string               `json:"media_filename,omitempty"`
@@ -380,6 +381,42 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 	})
 }
 
+// GetMessageByID returns a single message by ID
+// Agents can only access messages for their assigned contacts
+func (a *App) GetMessageByID(r *fastglue.Request) error {
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	messageID, err := parsePathUUID(r, "id", "message")
+	if err != nil {
+		return nil
+	}
+
+	hasContactsReadPermission := a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID)
+
+	var message models.Message
+	if err := a.DB.
+		Preload("ReplyToMessage").
+		Preload("Contact").
+		Where("id = ? AND organization_id = ?", messageID, orgID).
+		First(&message).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Message not found", nil, "")
+	}
+
+	if !hasContactsReadPermission {
+		if message.Contact == nil || message.Contact.AssignedUserID == nil || *message.Contact.AssignedUserID != userID {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+		}
+	}
+
+	response := a.buildMessagesResponse([]models.Message{message})
+	if len(response) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Message not found", nil, "")
+	}
+	return r.SendEnvelope(response[0])
+}
+
 // buildMessagesResponse converts messages to response format
 func (a *App) buildMessagesResponse(messages []models.Message) []MessageResponse {
 	response := make([]MessageResponse, len(messages))
@@ -397,6 +434,7 @@ func (a *App) buildMessagesResponse(messages []models.Message) []MessageResponse
 			Direction:       m.Direction,
 			MessageType:     m.MessageType,
 			Content:         content,
+			MediaID:         m.MediaID,
 			MediaURL:        m.MediaURL,
 			MediaMimeType:   m.MediaMimeType,
 			MediaFilename:   m.MediaFilename,

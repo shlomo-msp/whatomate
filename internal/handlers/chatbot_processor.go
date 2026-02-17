@@ -178,6 +178,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		// Handle image message
 		messageText = msg.Image.Caption
 		mediaInfo = &MediaInfo{
+			MediaID:       msg.Image.ID,
 			MediaMimeType: msg.Image.MimeType,
 		}
 		// Download and save media locally
@@ -191,6 +192,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		// Handle document message
 		messageText = msg.Document.Caption
 		mediaInfo = &MediaInfo{
+			MediaID:       msg.Document.ID,
 			MediaMimeType: msg.Document.MimeType,
 			MediaFilename: msg.Document.Filename,
 		}
@@ -205,6 +207,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		// Handle video message
 		messageText = msg.Video.Caption
 		mediaInfo = &MediaInfo{
+			MediaID:       msg.Video.ID,
 			MediaMimeType: msg.Video.MimeType,
 		}
 		// Download and save media locally
@@ -217,6 +220,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	} else if msg.Type == "audio" && msg.Audio != nil {
 		// Handle audio message
 		mediaInfo = &MediaInfo{
+			MediaID:       msg.Audio.ID,
 			MediaMimeType: msg.Audio.MimeType,
 		}
 		// Download and save media locally
@@ -229,6 +233,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	} else if msg.Type == "sticker" && msg.Sticker != nil {
 		// Handle sticker message (treat like image)
 		mediaInfo = &MediaInfo{
+			MediaID:       msg.Sticker.ID,
 			MediaMimeType: msg.Sticker.MimeType,
 		}
 		// Download and save media locally
@@ -2246,6 +2251,7 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 
 // MediaInfo holds media-related information for an incoming message
 type MediaInfo struct {
+	MediaID       string
 	MediaURL      string
 	MediaMimeType string
 	MediaFilename string
@@ -2280,6 +2286,7 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 
 	// Add media fields if present
 	if mediaInfo != nil {
+		message.MediaID = mediaInfo.MediaID
 		message.MediaURL = mediaInfo.MediaURL
 		message.MediaMimeType = mediaInfo.MediaMimeType
 		message.MediaFilename = mediaInfo.MediaFilename
@@ -2326,6 +2333,7 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 			"direction":        message.Direction,
 			"message_type":     message.MessageType,
 			"content":          map[string]string{"body": message.Content},
+			"media_id":         message.MediaID,
 			"media_url":        message.MediaURL,
 			"media_mime_type":  message.MediaMimeType,
 			"media_filename":   message.MediaFilename,

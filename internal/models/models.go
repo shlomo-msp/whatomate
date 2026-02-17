@@ -378,6 +378,7 @@ type Message struct {
 	Direction         Direction   `gorm:"size:10;not null" json:"direction"`
 	MessageType       MessageType `gorm:"size:20;not null" json:"message_type"`
 	Content           string     `gorm:"type:text" json:"content"`
+	MediaID          string     `gorm:"size:255" json:"media_id"`
 	MediaURL          string     `gorm:"type:text" json:"media_url"`
 	MediaMimeType     string     `gorm:"size:100" json:"media_mime_type"`
 	MediaFilename     string     `gorm:"size:255" json:"media_filename"`

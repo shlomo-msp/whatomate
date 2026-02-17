@@ -156,6 +156,10 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 					return "", fmt.Errorf("failed to upload media: %w", err)
 				}
 			}
+			if mediaID != "" && msg.MediaID != mediaID {
+				msg.MediaID = mediaID
+				a.DB.Model(&models.Message{}).Where("id = ?", msg.ID).Update("media_id", mediaID)
+			}
 			// Send the appropriate media type
 			switch req.Type {
 			case models.MessageTypeImage:
@@ -260,6 +264,7 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 
 	case models.MessageTypeImage, models.MessageTypeVideo, models.MessageTypeAudio, models.MessageTypeDocument:
 		msg.Content = req.Caption
+		msg.MediaID = req.MediaID
 		msg.MediaURL = req.MediaURL
 		msg.MediaMimeType = req.MediaMimeType
 		msg.MediaFilename = req.MediaFilename
@@ -394,6 +399,7 @@ func (a *App) broadcastNewMessage(orgID uuid.UUID, msg *models.Message, contact 
 
 	// Add media fields
 	if msg.MediaURL != "" {
+		payload["media_id"] = msg.MediaID
 		payload["media_url"] = msg.MediaURL
 		payload["media_mime_type"] = msg.MediaMimeType
 		payload["media_filename"] = msg.MediaFilename
