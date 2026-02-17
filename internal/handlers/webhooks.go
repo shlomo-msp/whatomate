@@ -332,6 +332,19 @@ func (a *App) UpdateWebhook(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update webhook", nil, "")
 	}
 
+	// Update pending/in-progress deliveries to use latest URL/headers/secret
+	updates := map[string]interface{}{
+		"url":     webhook.URL,
+		"headers": webhook.Headers,
+		"secret":  webhook.Secret,
+	}
+	if err := a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status IN ? AND (attempts < max_attempts OR max_attempts = 0)",
+			orgID, webhook.ID, []string{webhookStatusPending, webhookStatusInProgress, webhookStatusFailed}).
+		Updates(updates).Error; err != nil {
+		a.Log.Error("Failed to update pending webhook deliveries", "error", err, "webhook_id", webhook.ID)
+	}
+
 	// Invalidate cache
 	a.InvalidateWebhooksCache(orgID)
 
