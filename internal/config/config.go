@@ -30,6 +30,7 @@ type AppConfig struct {
 	Environment   string `koanf:"environment"` // development, staging, production
 	Debug         bool   `koanf:"debug"`
 	EncryptionKey string `koanf:"encryption_key"` // AES-256 key for encrypting secrets at rest
+	AllowInternalWebhookURLs bool `koanf:"allow_internal_webhook_urls"` // Allow private/internal webhook URLs (unsafe)
 }
 
 type ServerConfig struct {
