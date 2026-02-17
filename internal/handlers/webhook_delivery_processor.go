@@ -120,6 +120,12 @@ func (a *App) processWebhookDelivery(delivery models.WebhookDelivery) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Reload the delivery to pick up any updated URL/headers/secret/payload.
+	var fresh models.WebhookDelivery
+	if err := a.DB.Where("id = ?", delivery.ID).First(&fresh).Error; err == nil {
+		delivery = fresh
+	}
+
 	jsonData, err := json.Marshal(delivery.Payload)
 	if err != nil {
 		a.failWebhookDelivery(delivery, 0, "failed to marshal payload: "+err.Error())
