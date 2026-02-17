@@ -140,6 +140,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	messageType := msg.Type
 	buttonID := "" // Track button/list ID for conditional routing
 	var mediaInfo *MediaInfo
+	mediaID, mediaMime, mediaFilename := extractMediaFields(msg)
 
 	// Track flow response data for WhatsApp Flow forms
 	var flowResponseData map[string]interface{}
@@ -276,6 +277,16 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		}
 		if jsonBytes, err := json.Marshal(contactsData); err == nil {
 			messageText = string(jsonBytes)
+		}
+	}
+
+	// If a media ID exists but we didn't create mediaInfo (unsupported type or missing handler),
+	// still persist the ID for troubleshooting/future support.
+	if mediaInfo == nil && mediaID != "" {
+		mediaInfo = &MediaInfo{
+			MediaID:       mediaID,
+			MediaMimeType: mediaMime,
+			MediaFilename: mediaFilename,
 		}
 	}
 
@@ -2247,6 +2258,27 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// extractMediaFields returns media_id/mime/filename from any supported media payload.
+// This allows storing media_id even if the message type isn't handled yet.
+func extractMediaFields(msg IncomingTextMessage) (string, string, string) {
+	if msg.Image != nil && msg.Image.ID != "" {
+		return msg.Image.ID, msg.Image.MimeType, ""
+	}
+	if msg.Document != nil && msg.Document.ID != "" {
+		return msg.Document.ID, msg.Document.MimeType, msg.Document.Filename
+	}
+	if msg.Video != nil && msg.Video.ID != "" {
+		return msg.Video.ID, msg.Video.MimeType, ""
+	}
+	if msg.Audio != nil && msg.Audio.ID != "" {
+		return msg.Audio.ID, msg.Audio.MimeType, ""
+	}
+	if msg.Sticker != nil && msg.Sticker.ID != "" {
+		return msg.Sticker.ID, msg.Sticker.MimeType, ""
+	}
+	return "", "", ""
 }
 
 // MediaInfo holds media-related information for an incoming message
