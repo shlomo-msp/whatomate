@@ -7,19 +7,30 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || `${basePath}/api`
 export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
 })
 
-// Request interceptor to add auth token and organization header
+// Helper to read a cookie by name
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+// Request interceptor to add CSRF token and organization header
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem('auth_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    // Add CSRF token on mutating requests (cookie-based auth sends cookies automatically)
+    const method = (config.method || '').toUpperCase()
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH') {
+      const csrfToken = getCookie('whm_csrf')
+      if (csrfToken) {
+        config.headers['X-CSRF-Token'] = csrfToken
+      }
     }
-    // Add organization override header for super admins
+    // Add organization override header for org switching
     const selectedOrgId = localStorage.getItem('selected_organization_id')
     if (selectedOrgId) {
       config.headers['X-Organization-ID'] = selectedOrgId
@@ -44,28 +55,18 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true
 
-      const refreshToken = localStorage.getItem('refresh_token')
-      if (refreshToken) {
-        try {
-          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-            refresh_token: refreshToken
-          })
+      try {
+        // Browser sends whm_refresh cookie automatically via withCredentials
+        await axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true })
 
-          // fastglue wraps response in { status: "success", data: {...} }
-          const newToken = response.data.data.access_token
-          localStorage.setItem('auth_token', newToken)
-
-          originalRequest.headers.Authorization = `Bearer ${newToken}`
-          return api(originalRequest)
-        } catch {
-          // Refresh failed, clear auth and redirect to login
-          localStorage.removeItem('auth_token')
-          localStorage.removeItem('refresh_token')
-          localStorage.removeItem('user')
-          window.location.href = '/login'
-        }
-      } else {
-        window.location.href = '/login'
+        // Cookies are updated by the server response — retry the original request
+        return api(originalRequest)
+      } catch {
+        // Refresh failed, clear user and redirect to login
+        localStorage.removeItem('user')
+        localStorage.removeItem('auth_token')
+        localStorage.removeItem('refresh_token')
+        window.location.href = basePath + '/login'
       }
     }
 
@@ -78,7 +79,7 @@ export const authService = {
   login: (email: string, password: string) =>
     api.post('/auth/login', { email, password }),
 
-  register: (data: { email: string; password: string; full_name: string; organization_name: string }) =>
+  register: (data: { email: string; password: string; full_name: string; organization_id: string }) =>
     api.post('/auth/register', data),
 
   logout: () => api.post('/auth/logout'),
@@ -86,7 +87,12 @@ export const authService = {
   refreshToken: (refreshToken: string) =>
     api.post('/auth/refresh', { refresh_token: refreshToken }),
 
-  me: () => api.get('/auth/me')
+  me: () => api.get('/auth/me'),
+
+  switchOrg: (organizationId: string) =>
+    api.post('/auth/switch-org', { organization_id: organizationId }),
+
+  getWSToken: () => api.get('/auth/ws-token'),
 }
 
 export const usersService = {
@@ -112,7 +118,8 @@ export const usersService = {
   disableTwoFA: (currentPassword: string) =>
     api.post('/me/2fa/disable', { current_password: currentPassword }),
   resetTwoFA: (currentPassword: string) =>
-    api.post('/me/2fa/reset', { current_password: currentPassword })
+    api.post('/me/2fa/reset', { current_password: currentPassword }),
+  listMyOrganizations: () => api.get('/me/organizations'),
 }
 
 export const apiKeysService = {
@@ -227,10 +234,10 @@ export const templatesService = {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('account', accountName)
+    const csrfToken = getCookie('whm_csrf')
     return axios.post(`${api.defaults.baseURL}/templates/upload-media`, formData, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-      }
+      withCredentials: true,
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
     })
   }
 }
@@ -271,10 +278,10 @@ export const campaignsService = {
   uploadMedia: (campaignId: string, file: File) => {
     const formData = new FormData()
     formData.append('file', file)
+    const csrfToken = getCookie('whm_csrf')
     return axios.post(`${api.defaults.baseURL}/campaigns/${campaignId}/media`, formData, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-      }
+      withCredentials: true,
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
     })
   },
   getMedia: (campaignId: string) =>
@@ -630,7 +637,7 @@ export const organizationService = {
   }) => api.put('/org/settings', data)
 }
 
-// Organizations (super admin only)
+// Organizations
 export interface Organization {
   id: string
   name: string
@@ -640,9 +647,12 @@ export interface Organization {
 
 export const organizationsService = {
   list: () => api.get<{ organizations: Organization[] }>('/organizations'),
-  create: (data: { name: string }) => api.post<{ organization: Organization }>('/organizations', data),
+  getCurrent: () => api.get<Organization>('/organizations/current'),
+  create: (data: { name: string }) => api.post('/organizations', data),
   delete: (id: string) => api.delete(`/organizations/${id}`),
-  getCurrent: () => api.get<Organization>('/organizations/current')
+  // Members
+  addMember: (data: { user_id?: string; email?: string; role_id?: string }) =>
+    api.post('/organizations/members', data),
 }
 
 export interface Webhook {
@@ -851,6 +861,28 @@ export const tagsService = {
   update: (name: string, data: { name?: string; color?: string }) =>
     api.put<Tag>(`/tags/${encodeURIComponent(name)}`, data),
   delete: (name: string) => api.delete(`/tags/${encodeURIComponent(name)}`)
+}
+
+// Conversation Notes
+export interface ConversationNote {
+  id: string
+  contact_id: string
+  created_by_id: string
+  created_by_name: string
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export const notesService = {
+  list: (contactId: string, params?: { limit?: number; before?: string }) =>
+    api.get<{ notes: ConversationNote[]; total: number; has_more: boolean }>(`/contacts/${contactId}/notes`, { params }),
+  create: (contactId: string, data: { content: string }) =>
+    api.post<ConversationNote>(`/contacts/${contactId}/notes`, data),
+  update: (contactId: string, noteId: string, data: { content: string }) =>
+    api.put<ConversationNote>(`/contacts/${contactId}/notes/${noteId}`, data),
+  delete: (contactId: string, noteId: string) =>
+    api.delete(`/contacts/${contactId}/notes/${noteId}`)
 }
 
 export default api

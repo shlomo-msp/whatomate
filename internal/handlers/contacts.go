@@ -30,7 +30,7 @@ type ContactResponse struct {
 	AvatarURL          string     `json:"avatar_url"`
 	Status             string     `json:"status"`
 	Tags               []string   `json:"tags"`
-	CustomFields       any        `json:"custom_fields"`
+	Metadata           any        `json:"metadata"`
 	LastMessageAt      *time.Time `json:"last_message_at"`
 	LastMessagePreview string     `json:"last_message_preview"`
 	UnreadCount        int        `json:"unread_count"`
@@ -93,11 +93,15 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 	query := a.ScopeToOrg(a.DB, userID, orgID)
 
 	// Users without contacts:read permission can only see contacts assigned to them
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 
 	if search != "" {
+		// Limit search string length to prevent abuse
+		if len(search) > 1000 {
+			search = search[:1000]
+		}
 		searchPattern := "%" + search + "%"
 		// Use ILIKE for case-insensitive search on profile_name
 		query = query.Where("phone_number LIKE ? OR profile_name ILIKE ?", searchPattern, searchPattern)
@@ -115,7 +119,8 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			if tag != "" {
 				// Use proper JSONB containment with explicit cast
 				conditions = append(conditions, "tags @> ?::jsonb")
-				args = append(args, fmt.Sprintf(`["%s"]`, tag)) // JSON array: ["tagname"]
+				tagJSON, _ := json.Marshal([]string{tag})
+				args = append(args, string(tagJSON))
 			}
 		}
 		if len(conditions) > 0 {
@@ -169,7 +174,7 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			ProfileName:        profileName,
 			Status:             "active",
 			Tags:               tags,
-			CustomFields:       c.Metadata,
+			Metadata:           c.Metadata,
 			LastMessageAt:      c.LastMessageAt,
 			LastMessagePreview: c.LastMessagePreview,
 			UnreadCount:        int(unreadCount),
@@ -203,7 +208,7 @@ func (a *App) GetContact(r *fastglue.Request) error {
 	query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
 
 	// Users without contacts:read permission can only access their assigned contacts
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 
@@ -241,7 +246,7 @@ func (a *App) GetContact(r *fastglue.Request) error {
 		ProfileName:        profileName,
 		Status:             "active",
 		Tags:               tags,
-		CustomFields:       contact.Metadata,
+		Metadata:           contact.Metadata,
 		LastMessageAt:      contact.LastMessageAt,
 		LastMessagePreview: contact.LastMessagePreview,
 		UnreadCount:        int(unreadCount),
@@ -266,7 +271,7 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 		return nil
 	}
 
-	hasContactsReadPermission := a.HasPermission(userID, models.ResourceContacts, models.ActionRead)
+	hasContactsReadPermission := a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID)
 
 	// Verify contact belongs to org (and to user if no contacts:read permission)
 	var contact models.Contact
@@ -531,7 +536,7 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 	// Get contact (users without full read permission can only message their assigned contacts)
 	var contact models.Contact
 	query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 	if err := query.First(&contact).Error; err != nil {
@@ -541,7 +546,7 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 	// Get WhatsApp account
 	account, err := a.resolveWhatsAppAccount(orgID, contact.WhatsAppAccount)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Failed to resolve WhatsApp account", nil, "")
 	}
 
 	// Handle reply context
@@ -714,7 +719,7 @@ func (a *App) SendMediaMessage(r *fastglue.Request) error {
 	// Get contact (users without full read permission can only message their assigned contacts)
 	var contact models.Contact
 	query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 	if err := query.First(&contact).Error; err != nil {
@@ -860,7 +865,7 @@ func (a *App) SendReaction(r *fastglue.Request) error {
 	// Get contact (users without full read permission can only react to messages in their assigned contacts)
 	var contact models.Contact
 	query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 	if err := query.First(&contact).Error; err != nil {
@@ -1029,7 +1034,7 @@ func (a *App) AssignContact(r *fastglue.Request) error {
 	}
 
 	// Only users with write permission can assign contacts
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to assign contacts", nil, "")
 	}
 
@@ -1093,7 +1098,7 @@ func (a *App) GetContactSessionData(r *fastglue.Request) error {
 	// Verify contact belongs to org (users without full read permission can only access assigned contacts)
 	var contact models.Contact
 	query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		query = query.Where("assigned_user_id = ?", userID)
 	}
 	if err := query.First(&contact).Error; err != nil {
@@ -1184,7 +1189,7 @@ func (a *App) UpdateContactTags(r *fastglue.Request) error {
 	}
 
 	// Check permission - need contacts:write to update tags on contacts
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to update contact tags", nil, "")
 	}
 
@@ -1254,7 +1259,7 @@ func (a *App) CreateContact(r *fastglue.Request) error {
 	}
 
 	// Check permission
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to create contacts", nil, "")
 	}
 
@@ -1355,7 +1360,7 @@ func (a *App) UpdateContact(r *fastglue.Request) error {
 	}
 
 	// Check permission
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to update contacts", nil, "")
 	}
 
@@ -1426,7 +1431,7 @@ func (a *App) DeleteContact(r *fastglue.Request) error {
 	}
 
 	// Check permission
-	if !a.HasPermission(userID, models.ResourceContacts, models.ActionDelete) {
+	if !a.HasPermission(userID, models.ResourceContacts, models.ActionDelete, orgID) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to delete contacts", nil, "")
 	}
 
@@ -1484,7 +1489,7 @@ func (a *App) buildContactResponse(contact *models.Contact, orgID uuid.UUID) Con
 		ProfileName:        profileName,
 		Status:             "active",
 		Tags:               tags,
-		CustomFields:       contact.Metadata,
+		Metadata:           contact.Metadata,
 		LastMessageAt:      contact.LastMessageAt,
 		LastMessagePreview: contact.LastMessagePreview,
 		UnreadCount:        int(unreadCount),

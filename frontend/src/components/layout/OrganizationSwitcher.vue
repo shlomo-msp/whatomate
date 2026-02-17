@@ -1,45 +1,56 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { useAuthStore } from '@/stores/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Building2, Plus, RefreshCw } from 'lucide-vue-next'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { organizationsService } from '@/services/api'
 import { toast } from 'vue-sonner'
+import { Building2, Plus, Loader2 } from 'lucide-vue-next'
 
 const props = defineProps<{
   collapsed?: boolean
 }>()
 
+const { t } = useI18n()
 const organizationsStore = useOrganizationsStore()
 const authStore = useAuthStore()
-const isRefreshing = ref(false)
-const showCreateDialog = ref(false)
+
+const isCreateDialogOpen = ref(false)
 const newOrgName = ref('')
 const isCreating = ref(false)
 
-// Only show for super admins
-const isSuperAdmin = () => authStore.user?.is_super_admin || false
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false)
+const canCreateOrg = computed(() => authStore.hasPermission('organizations', 'write'))
+
+const shouldShowSwitcher = computed(() =>
+  isSuperAdmin.value || organizationsStore.isMultiOrg
+)
+
+// Build the org list depending on user type
+const orgList = computed(() => {
+  if (isSuperAdmin.value) {
+    return organizationsStore.organizations.map(org => ({ id: org.id, name: org.name }))
+  }
+  return organizationsStore.myOrganizations.map(org => ({ id: org.organization_id, name: org.name }))
+})
+
+const currentOrgId = computed(() => {
+  if (isSuperAdmin.value) {
+    return organizationsStore.selectedOrgId || ''
+  }
+  return authStore.user?.organization_id || ''
+})
 
 onMounted(async () => {
-  if (isSuperAdmin()) {
+  // Fetch user's org memberships for all authenticated users
+  await organizationsStore.fetchMyOrganizations()
+
+  if (isSuperAdmin.value) {
     organizationsStore.init()
     await organizationsStore.fetchOrganizations()
 
@@ -51,53 +62,50 @@ onMounted(async () => {
 })
 
 // Watch for auth changes
-watch(() => authStore.user?.is_super_admin, async (isSuperAdmin) => {
-  if (isSuperAdmin) {
+watch(() => authStore.user?.is_super_admin, async (superAdmin) => {
+  if (superAdmin) {
     organizationsStore.init()
     await organizationsStore.fetchOrganizations()
-  } else {
-    organizationsStore.reset()
   }
 })
 
-const handleOrgChange = (value: string | number | bigint | Record<string, any> | null) => {
+const handleOrgChange = async (value: string | number | bigint | Record<string, any> | null) => {
   if (!value || typeof value !== 'string') return
-  if (value === '__create__') {
-    showCreateDialog.value = true
-    return
+
+  if (isSuperAdmin.value) {
+    // Super admins: set localStorage header and reload
+    organizationsStore.selectOrganization(value)
+    window.location.reload()
+  } else {
+    // Multi-org users: call switchOrg API for new JWT tokens, then reload
+    try {
+      await authStore.switchOrg(value)
+      window.location.reload()
+    } catch {
+      // If switch fails, don't reload
+    }
   }
-  organizationsStore.selectOrganization(value)
-  // Reload the page to refresh data with new org context
-  window.location.reload()
 }
 
 const refreshOrgs = async () => {
-  isRefreshing.value = true
-  await organizationsStore.fetchOrganizations()
-  isRefreshing.value = false
+  if (isSuperAdmin.value) {
+    await organizationsStore.fetchOrganizations()
+  } else {
+    await organizationsStore.fetchMyOrganizations()
+  }
 }
 
-const createOrganization = async () => {
-  const name = newOrgName.value.trim()
-  if (!name) {
-    toast.error('Organization name is required')
-    return
-  }
-
+async function submitCreateOrg() {
+  if (!newOrgName.value.trim()) return
   isCreating.value = true
   try {
-    const response = await organizationsService.create({ name })
-    const org = (response.data as any).data?.organization || response.data?.organization
-    await organizationsStore.fetchOrganizations()
-    if (org?.id) {
-      organizationsStore.selectOrganization(org.id)
-      window.location.reload()
-    }
+    await organizationsService.create({ name: newOrgName.value.trim() })
+    toast.success(t('organizations.created'))
+    isCreateDialogOpen.value = false
     newOrgName.value = ''
-    showCreateDialog.value = false
-    toast.success('Organization created')
-  } catch (err: any) {
-    toast.error(err.response?.data?.message || 'Failed to create organization')
+    await refreshOrgs()
+  } catch {
+    toast.error(t('organizations.createFailed'))
   } finally {
     isCreating.value = false
   }
@@ -105,50 +113,43 @@ const createOrganization = async () => {
 </script>
 
 <template>
-  <div v-if="isSuperAdmin()" class="px-2 py-2 border-b">
+  <div v-if="shouldShowSwitcher" class="px-2 py-2 border-b">
     <div v-if="!collapsed" class="space-y-1">
       <div class="flex items-center justify-between">
         <span class="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1">
           Organization
         </span>
         <Button
+          v-if="canCreateOrg"
           variant="ghost"
           size="icon"
           class="h-5 w-5"
-          @click="refreshOrgs"
-          :disabled="isRefreshing"
+          @click="isCreateDialogOpen = true"
         >
-          <RefreshCw :class="['h-3 w-3', isRefreshing && 'animate-spin']" />
+          <Plus class="h-3 w-3" />
         </Button>
       </div>
-      <div v-if="organizationsStore.organizations.length > 0" class="space-y-2">
-        <Select
-          :model-value="organizationsStore.selectedOrgId || ''"
-          @update:model-value="handleOrgChange"
-        >
-          <SelectTrigger class="h-8 text-[13px]">
-            <SelectValue placeholder="Select organization" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem
-              v-for="org in organizationsStore.organizations"
-              :key="org.id"
-              :value="org.id"
-            >
-              <div class="flex items-center gap-2">
-                <Building2 class="h-3.5 w-3.5 text-muted-foreground" />
-                <span>{{ org.name }}</span>
-              </div>
-            </SelectItem>
-            <SelectItem value="__create__">
-              <div class="flex items-center gap-2">
-                <Plus class="h-3.5 w-3.5 text-muted-foreground" />
-                <span>Add organization</span>
-              </div>
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <Select
+        v-if="orgList.length > 0"
+        :model-value="currentOrgId"
+        @update:model-value="handleOrgChange"
+      >
+        <SelectTrigger class="h-8 text-[13px]">
+          <SelectValue placeholder="Select organization" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem
+            v-for="org in orgList"
+            :key="org.id"
+            :value="org.id"
+          >
+            <div class="flex items-center gap-2">
+              <Building2 class="h-3.5 w-3.5 text-muted-foreground" />
+              <span>{{ org.name }}</span>
+            </div>
+          </SelectItem>
+        </SelectContent>
+      </Select>
       <div v-else-if="organizationsStore.loading" class="text-[12px] text-muted-foreground px-1">
         Loading...
       </div>
@@ -173,34 +174,29 @@ const createOrganization = async () => {
     </div>
   </div>
 
-  <Dialog v-model:open="showCreateDialog">
-    <DialogContent class="sm:max-w-[420px]">
+  <!-- Create Org Dialog -->
+  <Dialog v-model:open="isCreateDialogOpen">
+    <DialogContent class="max-w-sm">
       <DialogHeader>
-        <DialogTitle>Create organization</DialogTitle>
-        <DialogDescription>
-          Add a new organization to manage within this deployment.
-        </DialogDescription>
+        <DialogTitle>{{ t('organizations.createTitle') }}</DialogTitle>
+        <DialogDescription>{{ t('organizations.createDesc') }}</DialogDescription>
       </DialogHeader>
-
-      <div class="space-y-2">
-        <Label for="org-name">Organization name</Label>
+      <div class="py-4 space-y-2">
+        <Label for="org-name">{{ t('organizations.namePlaceholder') }}</Label>
         <Input
           id="org-name"
           v-model="newOrgName"
-          placeholder="Acme Inc."
-          :disabled="isCreating"
+          :placeholder="t('organizations.namePlaceholder')"
+          @keydown.enter="submitCreateOrg"
         />
       </div>
-
-      <DialogFooter class="gap-2">
-        <Button variant="outline" @click="showCreateDialog = false" :disabled="isCreating">
-          Cancel
-        </Button>
-        <Button @click="createOrganization" :disabled="isCreating">
-          Create
+      <DialogFooter>
+        <Button variant="outline" @click="isCreateDialogOpen = false">{{ t('common.cancel') }}</Button>
+        <Button @click="submitCreateOrg" :disabled="isCreating || !newOrgName.trim()">
+          <Loader2 v-if="isCreating" class="h-4 w-4 mr-2 animate-spin" />
+          {{ t('common.create') }}
         </Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
-
 </template>

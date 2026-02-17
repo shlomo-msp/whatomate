@@ -92,8 +92,9 @@ type Organization struct {
 	Settings JSONB  `gorm:"type:jsonb;default:'{}'" json:"settings"`
 
 	// Relations
-	Users            []User            `gorm:"foreignKey:OrganizationID" json:"users,omitempty"`
-	WhatsAppAccounts []WhatsAppAccount `gorm:"foreignKey:OrganizationID" json:"whatsapp_accounts,omitempty"`
+	Users              []User               `gorm:"foreignKey:OrganizationID" json:"users,omitempty"`
+	UserOrganizations  []UserOrganization   `gorm:"foreignKey:OrganizationID" json:"user_organizations,omitempty"`
+	WhatsAppAccounts   []WhatsAppAccount    `gorm:"foreignKey:OrganizationID" json:"whatsapp_accounts,omitempty"`
 }
 
 func (Organization) TableName() string {
@@ -122,12 +123,31 @@ type User struct {
 	SSOProviderID string `gorm:"size:255" json:"sso_provider_id,omitempty"` // External user ID from provider
 
 	// Relations
-	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
-	Role         *CustomRole   `gorm:"foreignKey:RoleID" json:"role,omitempty"`
+	Organization      *Organization      `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Role              *CustomRole        `gorm:"foreignKey:RoleID" json:"role,omitempty"`
+	UserOrganizations []UserOrganization `gorm:"foreignKey:UserID" json:"user_organizations,omitempty"`
 }
 
 func (User) TableName() string {
 	return "users"
+}
+
+// UserOrganization represents a many-to-many relationship between users and organizations
+type UserOrganization struct {
+	BaseModel
+	UserID         uuid.UUID  `gorm:"type:uuid;uniqueIndex:idx_user_org;not null" json:"user_id"`
+	OrganizationID uuid.UUID  `gorm:"type:uuid;uniqueIndex:idx_user_org;not null" json:"organization_id"`
+	RoleID         *uuid.UUID `gorm:"type:uuid;index" json:"role_id,omitempty"`
+	IsDefault      bool       `gorm:"default:false" json:"is_default"`
+
+	// Relations
+	User         *User         `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Role         *CustomRole   `gorm:"foreignKey:RoleID" json:"role,omitempty"`
+}
+
+func (UserOrganization) TableName() string {
+	return "user_organizations"
 }
 
 // UserAvailabilityLog tracks user availability changes for break time calculation
@@ -188,7 +208,7 @@ type APIKey struct {
 	OrganizationID uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
 	UserID         uuid.UUID  `gorm:"type:uuid;index;not null" json:"user_id"` // Creator
 	Name           string     `gorm:"size:255;not null" json:"name"`
-	KeyPrefix      string     `gorm:"size:8;index" json:"key_prefix"` // First 8 chars for identification
+	KeyPrefix      string     `gorm:"size:16;index" json:"key_prefix"` // First 16 chars for identification
 	KeyHash        string     `gorm:"size:255;not null" json:"-"`     // bcrypt hash of full key
 	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"` // null = never expires
