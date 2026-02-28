@@ -14,6 +14,18 @@ import (
 
 // initiateTransfer starts the transfer flow: puts caller on hold, notifies agents via WebSocket.
 func (m *Manager) initiateTransfer(session *CallSession, waAccount string, teamTarget string, ivrPath []map[string]string) {
+	// Start hold music immediately to avoid silence while DB operations run
+	holdFile := m.getOrgHoldMusic(session.OrganizationID)
+	player := NewAudioPlayer(session.AudioTrack)
+
+	session.mu.Lock()
+	session.HoldPlayer = player
+	session.mu.Unlock()
+
+	go func() {
+		_ = player.PlayFileLoop(holdFile)
+	}()
+
 	var teamID *uuid.UUID
 	if teamTarget != "" {
 		if parsed, err := uuid.Parse(teamTarget); err == nil {
@@ -42,6 +54,7 @@ func (m *Manager) initiateTransfer(session *CallSession, waAccount string, teamT
 
 	if err := m.db.Create(&transfer).Error; err != nil {
 		m.log.Error("Failed to create call transfer", "error", err, "call_id", session.ID)
+		player.Stop()
 		return
 	}
 
@@ -55,18 +68,6 @@ func (m *Manager) initiateTransfer(session *CallSession, waAccount string, teamT
 	session.TransferID = transfer.ID
 	session.TransferStatus = models.CallTransferStatusWaiting
 	session.mu.Unlock()
-
-	// Start hold music on the caller's audio track (org-level override or global default)
-	holdFile := m.getOrgHoldMusic(session.OrganizationID)
-	player := NewAudioPlayer(session.AudioTrack)
-
-	session.mu.Lock()
-	session.HoldPlayer = player
-	session.mu.Unlock()
-
-	go func() {
-		_ = player.PlayFileLoop(holdFile)
-	}()
 
 	// Start timeout goroutine (use org-level override if set)
 	transferTimeout := m.getOrgTransferTimeout(session.OrganizationID)
@@ -416,6 +417,11 @@ func (m *Manager) waitForTransferTimeout(ctx context.Context, session *CallSessi
 			"completed_at": now,
 		})
 
+	// Mark call as disconnected by system (transfer timeout)
+	m.db.Model(&models.CallLog{}).
+		Where("id = ?", session.CallLogID).
+		Update("disconnected_by", models.DisconnectedBySystem)
+
 	// Stop hold music
 	session.mu.Lock()
 	if session.HoldPlayer != nil {
@@ -453,6 +459,11 @@ func (m *Manager) HandleCallerHangupDuringTransfer(session *CallSession) {
 			"status":       models.CallTransferStatusAbandoned,
 			"completed_at": now,
 		})
+
+	// Mark call as disconnected by client (caller hung up during transfer)
+	m.db.Model(&models.CallLog{}).
+		Where("id = ?", session.CallLogID).
+		Update("disconnected_by", models.DisconnectedByClient)
 
 	// Stop hold music and cancel timeout
 	session.mu.Lock()

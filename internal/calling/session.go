@@ -277,6 +277,27 @@ func (m *Manager) cleanupSession(callID string) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
+	// If there's a transfer still in waiting state, mark it as abandoned
+	// (caller disconnected before any agent accepted the transfer)
+	if session.TransferID != uuid.Nil && session.TransferStatus == models.CallTransferStatusWaiting {
+		session.TransferStatus = models.CallTransferStatusAbandoned
+		now := time.Now()
+		m.db.Model(&models.CallTransfer{}).
+			Where("id = ? AND status = ?", session.TransferID, models.CallTransferStatusWaiting).
+			Updates(map[string]any{
+				"status":       models.CallTransferStatusAbandoned,
+				"completed_at": now,
+			})
+		m.db.Model(&models.CallLog{}).
+			Where("id = ?", session.CallLogID).
+			Update("disconnected_by", models.DisconnectedByClient)
+		m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferAbandoned, map[string]any{
+			"id":           session.TransferID.String(),
+			"completed_at": now.Format(time.RFC3339),
+		})
+		m.log.Info("Transfer marked abandoned during cleanup", "transfer_id", session.TransferID, "call_id", callID)
+	}
+
 	// Stop transfer resources
 	if session.Bridge != nil {
 		session.Bridge.Stop()

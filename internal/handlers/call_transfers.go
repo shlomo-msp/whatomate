@@ -180,6 +180,11 @@ func (a *App) HangupCallTransfer(r *fastglue.Request) error {
 
 	a.CallManager.EndTransfer(transferID)
 
+	// Mark the call as disconnected by agent
+	a.DB.Model(&models.CallLog{}).
+		Where("id = ?", transfer.CallLogID).
+		Update("disconnected_by", models.DisconnectedByAgent)
+
 	return r.SendEnvelope(map[string]string{
 		"status": "completed",
 	})

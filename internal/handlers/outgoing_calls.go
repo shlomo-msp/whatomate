@@ -101,6 +101,11 @@ func (a *App) HangupOutgoingCall(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
+	// Mark the call as disconnected by agent
+	a.DB.Model(&models.CallLog{}).
+		Where("id = ?", callLogID).
+		Update("disconnected_by", models.DisconnectedByAgent)
+
 	return r.SendEnvelope(map[string]string{"status": "ok"})
 }
 

@@ -240,9 +240,10 @@ func (m *Manager) InitiateOutgoingCall(
 		_ = waPC.Close()
 		// Update call log as failed
 		m.db.Model(&callLog).Updates(map[string]any{
-			"status":        models.CallStatusFailed,
-			"error_message": err.Error(),
-			"ended_at":      time.Now(),
+			"status":          models.CallStatusFailed,
+			"error_message":   err.Error(),
+			"ended_at":        time.Now(),
+			"disconnected_by": models.DisconnectedBySystem,
 		})
 		return uuid.Nil, "", fmt.Errorf("failed to initiate call via API: %w", err)
 	}
@@ -382,8 +383,9 @@ func (m *Manager) HandleOutgoingCallWebhook(callID, event, sdpAnswer string) {
 		m.db.Model(&models.CallLog{}).
 			Where("id = ?", session.CallLogID).
 			Updates(map[string]any{
-				"status":   models.CallStatusRejected,
-				"ended_at": now,
+				"status":          models.CallStatusRejected,
+				"ended_at":        now,
+				"disconnected_by": models.DisconnectedByClient,
 			})
 
 		m.broadcastOutgoingEvent(session.OrganizationID, websocket.TypeOutgoingCallRejected, map[string]any{
@@ -398,24 +400,33 @@ func (m *Manager) HandleOutgoingCallWebhook(callID, event, sdpAnswer string) {
 	case "ended", "terminated", "terminate":
 		// Calculate duration
 		var callLog models.CallLog
+		disconnectedBy := "client"
 		if err := m.db.Where("id = ?", session.CallLogID).First(&callLog).Error; err == nil {
 			duration := 0
 			if callLog.AnsweredAt != nil {
 				duration = int(now.Sub(*callLog.AnsweredAt).Seconds())
 			}
-			m.db.Model(&callLog).Updates(map[string]any{
+			updates := map[string]any{
 				"status":   models.CallStatusCompleted,
 				"ended_at": now,
 				"duration": duration,
-			})
+			}
+			// Only set disconnected_by if not already set (agent hangup sets it first)
+			if callLog.DisconnectedBy == "" {
+				updates["disconnected_by"] = models.DisconnectedByClient
+			} else {
+				disconnectedBy = string(callLog.DisconnectedBy)
+			}
+			m.db.Model(&callLog).Updates(updates)
 		}
 
 		m.broadcastOutgoingEvent(session.OrganizationID, websocket.TypeOutgoingCallEnded, map[string]any{
-			"call_log_id":   session.CallLogID.String(),
-			"call_id":       callID,
-			"contact_id":    session.ContactID.String(),
-			"contact_phone": session.TargetPhone,
-			"ended_at":      now.Format(time.RFC3339),
+			"call_log_id":      session.CallLogID.String(),
+			"call_id":          callID,
+			"contact_id":       session.ContactID.String(),
+			"contact_phone":    session.TargetPhone,
+			"ended_at":         now.Format(time.RFC3339),
+			"disconnected_by":  disconnectedBy,
 		})
 
 		m.cleanupSession(callID)
@@ -467,18 +478,20 @@ func (m *Manager) HangupOutgoingCall(callLogID, agentID uuid.UUID) error {
 			duration = int(now.Sub(*callLog.AnsweredAt).Seconds())
 		}
 		m.db.Model(&callLog).Updates(map[string]any{
-			"status":   models.CallStatusCompleted,
-			"ended_at": now,
-			"duration": duration,
+			"status":          models.CallStatusCompleted,
+			"ended_at":        now,
+			"duration":        duration,
+			"disconnected_by": models.DisconnectedByAgent,
 		})
 	}
 
 	m.broadcastOutgoingEvent(session.OrganizationID, websocket.TypeOutgoingCallEnded, map[string]any{
-		"call_log_id":   callLogID.String(),
-		"call_id":       session.ID,
-		"contact_id":    session.ContactID.String(),
-		"contact_phone": session.TargetPhone,
-		"ended_at":      now.Format(time.RFC3339),
+		"call_log_id":      callLogID.String(),
+		"call_id":          session.ID,
+		"contact_id":       session.ContactID.String(),
+		"contact_phone":    session.TargetPhone,
+		"ended_at":         now.Format(time.RFC3339),
+		"disconnected_by":  "agent",
 	})
 
 	m.cleanupSession(session.ID)
