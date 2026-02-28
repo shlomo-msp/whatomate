@@ -834,10 +834,14 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	hasPickupPermission := a.HasPermission(userID, models.ResourceTransfers, models.ActionPickup, orgID)
 
 	// Check if agent queue pickup is allowed (use cache)
-	settings, _ := a.getChatbotSettingsCached(orgID, "")
+	settings, err := a.getChatbotSettingsCached(orgID, "")
+	if err != nil {
+		a.Log.Error("Failed to load chatbot settings for queue pickup check", "error", err, "org_id", orgID)
+	}
 
-	// Users without full access need pickup permission and AllowQueuePickup setting enabled
-	if !hasFullAccess && settings != nil && !settings.AgentAssignment.AllowQueuePickup {
+	// Users without full access need pickup permission and AllowQueuePickup setting enabled.
+	// If settings failed to load, deny pickup for non-admin users (fail closed).
+	if !hasFullAccess && (settings == nil || !settings.AgentAssignment.AllowQueuePickup) {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Queue pickup is not allowed", nil, "")
 	}
 

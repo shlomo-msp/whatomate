@@ -315,27 +315,30 @@ func (m *Manager) EndTransfer(transferID uuid.UUID) {
 	}
 	session.TransferStatus = models.CallTransferStatusCompleted
 
-	// Stop bridge
-	if session.Bridge != nil {
-		session.Bridge.Stop()
-	}
-
-	// Stop hold music
-	if session.HoldPlayer != nil {
-		session.HoldPlayer.Stop()
-	}
-
-	// Cancel timeout
-	if session.TransferCancel != nil {
-		session.TransferCancel()
-	}
-
-	// Close agent PC
-	if session.AgentPC != nil {
-		_ = session.AgentPC.Close()
-	}
-
+	// Snapshot and nil resources under lock so we can release before calling Stop/Close
+	bridge := session.Bridge
+	session.Bridge = nil
+	holdPlayer := session.HoldPlayer
+	session.HoldPlayer = nil
+	transferCancel := session.TransferCancel
+	session.TransferCancel = nil
+	agentPC := session.AgentPC
+	session.AgentPC = nil
 	session.mu.Unlock()
+
+	// Stop/close resources outside lock
+	if bridge != nil {
+		bridge.Stop()
+	}
+	if holdPlayer != nil {
+		holdPlayer.Stop()
+	}
+	if transferCancel != nil {
+		transferCancel()
+	}
+	if agentPC != nil {
+		_ = agentPC.Close()
+	}
 
 	// Calculate durations and update DB
 	now := time.Now()
@@ -491,9 +494,13 @@ func (m *Manager) HandleCallerHangupDuringTransfer(session *CallSession) {
 // findSessionByTransferID looks up a session by its transfer ID.
 func (m *Manager) findSessionByTransferID(transferID uuid.UUID) *CallSession {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
+	snapshot := make([]*CallSession, 0, len(m.sessions))
 	for _, s := range m.sessions {
+		snapshot = append(snapshot, s)
+	}
+	m.mu.RUnlock()
+
+	for _, s := range snapshot {
 		s.mu.Lock()
 		tid := s.TransferID
 		s.mu.Unlock()

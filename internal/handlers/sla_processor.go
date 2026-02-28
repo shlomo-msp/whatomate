@@ -48,7 +48,11 @@ func (p *SLAProcessor) Start(ctx context.Context) {
 
 // Stop stops the SLA processor
 func (p *SLAProcessor) Stop() {
-	close(p.stopCh)
+	select {
+	case <-p.stopCh:
+	default:
+		close(p.stopCh)
+	}
 }
 
 // processStaleTransfers checks for transfers that need escalation or auto-close

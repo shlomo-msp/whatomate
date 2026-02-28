@@ -279,77 +279,105 @@ func (m *Manager) cleanupSession(callID string) {
 		return
 	}
 
+	// Snapshot state and resources under lock, then release before calling external methods
 	session.mu.Lock()
-	defer session.mu.Unlock()
 
-	// If there's a transfer still in waiting state, mark it as abandoned
-	// (caller disconnected before any agent accepted the transfer)
-	if session.TransferID != uuid.Nil && session.TransferStatus == models.CallTransferStatusWaiting {
+	// Transfer state snapshot for DB updates
+	transferID := session.TransferID
+	transferStatus := session.TransferStatus
+	callLogID := session.CallLogID
+	orgID := session.OrganizationID
+
+	if transferID != uuid.Nil && transferStatus == models.CallTransferStatusWaiting {
 		session.TransferStatus = models.CallTransferStatusAbandoned
+	}
+
+	// Snapshot and nil resources to prevent double-close
+	bridge := session.Bridge
+	session.Bridge = nil
+	holdPlayer := session.HoldPlayer
+	session.HoldPlayer = nil
+	ringbackPlayer := session.RingbackPlayer
+	session.RingbackPlayer = nil
+	ivrPlayer := session.IVRPlayer
+	session.IVRPlayer = nil
+	transferCancel := session.TransferCancel
+	session.TransferCancel = nil
+	agentPC := session.AgentPC
+	session.AgentPC = nil
+	waPeerConn := session.WAPeerConn
+	session.WAPeerConn = nil
+	peerConn := session.PeerConnection
+	session.PeerConnection = nil
+	dtmfBuffer := session.DTMFBuffer
+	session.DTMFBuffer = nil
+	recorder := session.Recorder
+	session.Recorder = nil
+
+	session.mu.Unlock()
+
+	// DB operations and broadcasts (outside lock)
+	if transferID != uuid.Nil && transferStatus == models.CallTransferStatusWaiting {
 		now := time.Now()
 		m.db.Model(&models.CallTransfer{}).
-			Where("id = ? AND status = ?", session.TransferID, models.CallTransferStatusWaiting).
+			Where("id = ? AND status = ?", transferID, models.CallTransferStatusWaiting).
 			Updates(map[string]any{
 				"status":       models.CallTransferStatusAbandoned,
 				"completed_at": now,
 			})
 		m.db.Model(&models.CallLog{}).
-			Where("id = ?", session.CallLogID).
+			Where("id = ?", callLogID).
 			Update("disconnected_by", models.DisconnectedByClient)
-		m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferAbandoned, map[string]any{
-			"id":           session.TransferID.String(),
+		m.broadcastTransferEvent(orgID, websocket.TypeCallTransferAbandoned, map[string]any{
+			"id":           transferID.String(),
 			"completed_at": now.Format(time.RFC3339),
 		})
-		m.log.Info("Transfer marked abandoned during cleanup", "transfer_id", session.TransferID, "call_id", callID)
+		m.log.Info("Transfer marked abandoned during cleanup", "transfer_id", transferID, "call_id", callID)
 	}
 
-	// Stop transfer resources
-	if session.Bridge != nil {
-		session.Bridge.Stop()
+	// Stop resources (outside lock)
+	if bridge != nil {
+		bridge.Stop()
 	}
-	if session.HoldPlayer != nil {
-		session.HoldPlayer.Stop()
+	if holdPlayer != nil {
+		holdPlayer.Stop()
 	}
-	if session.RingbackPlayer != nil {
-		session.RingbackPlayer.Stop()
+	if ringbackPlayer != nil {
+		ringbackPlayer.Stop()
 	}
-	if session.IVRPlayer != nil {
-		session.IVRPlayer.Stop()
+	if ivrPlayer != nil {
+		ivrPlayer.Stop()
 	}
-	if session.TransferCancel != nil {
-		session.TransferCancel()
+	if transferCancel != nil {
+		transferCancel()
 	}
-	if session.AgentPC != nil {
-		if err := session.AgentPC.Close(); err != nil {
+	if agentPC != nil {
+		if err := agentPC.Close(); err != nil {
 			m.log.Error("Failed to close agent peer connection", "error", err, "call_id", callID)
 		}
 	}
 
 	// Close WhatsApp peer connection (outgoing calls)
-	if session.WAPeerConn != nil {
-		if err := session.WAPeerConn.Close(); err != nil {
+	if waPeerConn != nil {
+		if err := waPeerConn.Close(); err != nil {
 			m.log.Error("Failed to close WA peer connection", "error", err, "call_id", callID)
 		}
 	}
 
 	// Close caller peer connection
-	if session.PeerConnection != nil {
-		if err := session.PeerConnection.Close(); err != nil {
+	if peerConn != nil {
+		if err := peerConn.Close(); err != nil {
 			m.log.Error("Failed to close peer connection", "error", err, "call_id", callID)
 		}
 	}
 
 	// Close DTMF buffer channel
-	if session.DTMFBuffer != nil {
-		close(session.DTMFBuffer)
+	if dtmfBuffer != nil {
+		close(dtmfBuffer)
 	}
 
 	// Finalize recording (async — don't block cleanup)
-	if session.Recorder != nil {
-		recorder := session.Recorder
-		session.Recorder = nil
-		orgID := session.OrganizationID
-		callLogID := session.CallLogID
+	if recorder != nil {
 		go m.finalizeRecording(orgID, callLogID, recorder)
 	}
 

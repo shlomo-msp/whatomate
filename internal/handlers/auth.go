@@ -536,7 +536,10 @@ func (a *App) GetWSToken(r *fastglue.Request) error {
 	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-	orgID, _ := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
+	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
+	if !ok {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
 
 	claims := middleware.JWTClaims{
 		UserID:         userID,
