@@ -546,13 +546,7 @@ func (a *App) CreateAgentTransfer(r *fastglue.Request) error {
 	a.DB.Preload("Agent").Preload("Team").Preload("TransferredByUser").First(&transfer, transfer.ID)
 
 	// Apply phone masking if enabled
-	shouldMask := a.ShouldMaskPhoneNumbers(orgID)
-	phoneNumber := transfer.PhoneNumber
-	contactName := contact.ProfileName
-	if shouldMask {
-		phoneNumber = MaskPhoneNumber(phoneNumber)
-		contactName = MaskIfPhoneNumber(contactName)
-	}
+	contactName, phoneNumber := a.MaskContactFields(orgID, contact.ProfileName, transfer.PhoneNumber)
 
 	resp := AgentTransferResponse{
 		ID:              transfer.ID.String(),
@@ -834,9 +828,13 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	hasPickupPermission := a.HasPermission(userID, models.ResourceTransfers, models.ActionPickup, orgID)
 
 	// Check if agent queue pickup is allowed (use cache)
-	settings, _ := a.getChatbotSettingsCached(orgID, "")
+	settings, err := a.getChatbotSettingsCached(orgID, "")
+	if err != nil {
+		a.Log.Error("Failed to load chatbot settings for queue pickup check", "error", err, "org_id", orgID)
+	}
 
-	// Users without full access need pickup permission and AllowQueuePickup setting enabled
+	// Users without full access need AllowQueuePickup enabled when settings exist.
+	// If settings haven't been configured yet (nil), allow pickup by default.
 	if !hasFullAccess && settings != nil && !settings.AgentAssignment.AllowQueuePickup {
 		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Queue pickup is not allowed", nil, "")
 	}
@@ -1048,12 +1046,7 @@ func (a *App) broadcastTransferCreated(transfer *models.AgentTransfer, contact *
 		return
 	}
 
-	contactName := contact.ProfileName
-	phoneNumber := transfer.PhoneNumber
-	if a.ShouldMaskPhoneNumbers(transfer.OrganizationID) {
-		contactName = MaskIfPhoneNumber(contactName)
-		phoneNumber = MaskPhoneNumber(phoneNumber)
-	}
+	contactName, phoneNumber := a.MaskContactFields(transfer.OrganizationID, contact.ProfileName, transfer.PhoneNumber)
 
 	payload := map[string]any{
 		"id":               transfer.ID.String(),
@@ -1134,23 +1127,53 @@ func (a *App) broadcastTransferAssigned(transfer *models.AgentTransfer) {
 	})
 }
 
+// saveAndFinalizeTransfer handles the common post-creation steps for agent transfers:
+// sets SLA deadlines, saves to DB, updates contact assignment, optionally ends chatbot sessions, and broadcasts.
+func (a *App) saveAndFinalizeTransfer(transfer *models.AgentTransfer, account *models.WhatsAppAccount, contact *models.Contact, settings *models.ChatbotSettings, endChatbotSession bool) error {
+	// Set SLA deadlines
+	if settings != nil {
+		a.SetSLADeadlines(transfer, settings)
+	}
+
+	// If agent is already assigned, mark as picked up
+	if transfer.AgentID != nil {
+		a.UpdateSLAOnPickup(transfer)
+	}
+
+	if err := a.DB.Create(transfer).Error; err != nil {
+		return err
+	}
+
+	// Update contact assignment if agent assigned
+	if transfer.AgentID != nil {
+		a.DB.Model(contact).Update("assigned_user_id", transfer.AgentID)
+	}
+
+	// End any active chatbot session
+	if endChatbotSession {
+		a.DB.Model(&models.ChatbotSession{}).
+			Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.SessionStatusActive).
+			Updates(map[string]any{
+				"status":       models.SessionStatusCancelled,
+				"completed_at": time.Now(),
+			})
+	}
+
+	// Broadcast to WebSocket
+	a.broadcastTransferCreated(transfer, contact)
+
+	return nil
+}
+
 // createTransferToQueue creates an unassigned agent transfer that goes to the queue
 func (a *App) createTransferToQueue(account *models.WhatsAppAccount, contact *models.Contact, source models.TransferSource) {
-	// Check for existing active transfer
-	var existingCount int64
-	a.DB.Model(&models.AgentTransfer{}).
-		Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.TransferStatusActive).
-		Count(&existingCount)
-
-	if existingCount > 0 {
+	if a.hasActiveAgentTransfer(account.OrganizationID, contact.ID) {
 		a.Log.Debug("Contact already has active transfer, skipping", "contact_id", contact.ID, "source", source)
 		return
 	}
 
-	// Get chatbot settings for SLA (use cache)
 	settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
 
-	// Create unassigned transfer (goes to queue)
 	transfer := models.AgentTransfer{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  account.OrganizationID,
@@ -1159,40 +1182,24 @@ func (a *App) createTransferToQueue(account *models.WhatsAppAccount, contact *mo
 		PhoneNumber:     contact.PhoneNumber,
 		Status:          models.TransferStatusActive,
 		Source:          source,
-		AgentID:         nil, // Unassigned - goes to queue
 		TransferredAt:   time.Now(),
 	}
 
-	// Set SLA deadlines
-	if settings != nil {
-		a.SetSLADeadlines(&transfer, settings)
-	}
-
-	if err := a.DB.Create(&transfer).Error; err != nil {
+	if err := a.saveAndFinalizeTransfer(&transfer, account, contact, settings, false); err != nil {
 		a.Log.Error("Failed to create transfer to queue", "error", err, "contact_id", contact.ID, "source", string(source))
 		return
 	}
 
 	a.Log.Info("Transfer created to agent queue", "transfer_id", transfer.ID, "contact_id", contact.ID, "source", source)
-
-	// Broadcast to WebSocket
-	a.broadcastTransferCreated(&transfer, contact)
 }
 
 // createTransferFromKeyword creates an agent transfer triggered by a keyword rule
 func (a *App) createTransferFromKeyword(account *models.WhatsAppAccount, contact *models.Contact) {
-	// Check for existing active transfer
-	var existingCount int64
-	a.DB.Model(&models.AgentTransfer{}).
-		Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.TransferStatusActive).
-		Count(&existingCount)
-
-	if existingCount > 0 {
+	if a.hasActiveAgentTransfer(account.OrganizationID, contact.ID) {
 		a.Log.Info("Contact already has active transfer, skipping keyword transfer", "contact_id", contact.ID)
 		return
 	}
 
-	// Get chatbot settings to check AssignToSameAgent and business hours (use cache)
 	settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
 
 	// Check business hours - if outside hours, send out of hours message instead of transfer
@@ -1209,15 +1216,12 @@ func (a *App) createTransferFromKeyword(account *models.WhatsAppAccount, contact
 	// Determine agent assignment
 	var agentID *uuid.UUID
 	if settings != nil && settings.AgentAssignment.AssignToSameAgent && contact.AssignedUserID != nil {
-		// Check if the assigned agent is available
 		var assignedAgent models.User
 		if a.DB.Where("id = ?", contact.AssignedUserID).First(&assignedAgent).Error == nil && assignedAgent.IsAvailable {
 			agentID = contact.AssignedUserID
 		}
-		// If agent is not available, falls through to queue (agentID remains nil)
 	}
 
-	// Create transfer
 	transfer := models.AgentTransfer{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  account.OrganizationID,
@@ -1230,33 +1234,10 @@ func (a *App) createTransferFromKeyword(account *models.WhatsAppAccount, contact
 		TransferredAt:   time.Now(),
 	}
 
-	// Set SLA deadlines
-	if settings != nil {
-		a.SetSLADeadlines(&transfer, settings)
-	}
-
-	// If agent is already assigned, mark as picked up
-	if agentID != nil {
-		a.UpdateSLAOnPickup(&transfer)
-	}
-
-	if err := a.DB.Create(&transfer).Error; err != nil {
+	if err := a.saveAndFinalizeTransfer(&transfer, account, contact, settings, true); err != nil {
 		a.Log.Error("Failed to create keyword-triggered transfer", "error", err, "contact_id", contact.ID)
 		return
 	}
-
-	// Update contact assignment if agent assigned
-	if agentID != nil {
-		a.DB.Model(&contact).Update("assigned_user_id", agentID)
-	}
-
-	// End any active chatbot session
-	a.DB.Model(&models.ChatbotSession{}).
-		Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.SessionStatusActive).
-		Updates(map[string]any{
-			"status":       models.SessionStatusCancelled,
-			"completed_at": time.Now(),
-		})
 
 	var agentIDStr string
 	if agentID != nil {
@@ -1267,9 +1248,6 @@ func (a *App) createTransferFromKeyword(account *models.WhatsAppAccount, contact
 		"contact_id", contact.ID,
 		"agent_id", agentIDStr,
 	)
-
-	// Broadcast to WebSocket
-	a.broadcastTransferCreated(&transfer, contact)
 }
 
 // assignToTeam applies the team's assignment strategy to select an agent
@@ -1384,24 +1362,15 @@ func (a *App) assignToTeamLoadBalanced(teamID uuid.UUID, orgID uuid.UUID) *uuid.
 
 // createTransferToTeam creates an agent transfer to a specific team with appropriate assignment
 func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *models.Contact, teamID uuid.UUID, notes string, source models.TransferSource) {
-	// Check for existing active transfer
-	var existingCount int64
-	a.DB.Model(&models.AgentTransfer{}).
-		Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.TransferStatusActive).
-		Count(&existingCount)
-
-	if existingCount > 0 {
+	if a.hasActiveAgentTransfer(account.OrganizationID, contact.ID) {
 		a.Log.Debug("Contact already has active transfer, skipping team transfer", "contact_id", contact.ID, "team_id", teamID)
 		return
 	}
 
-	// Get chatbot settings for SLA (use cache)
 	settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
 
-	// Apply team's assignment strategy
 	agentID := a.assignToTeam(teamID, account.OrganizationID)
 
-	// Create transfer
 	transfer := models.AgentTransfer{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  account.OrganizationID,
@@ -1416,33 +1385,10 @@ func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *mod
 		TransferredAt:   time.Now(),
 	}
 
-	// Set SLA deadlines
-	if settings != nil {
-		a.SetSLADeadlines(&transfer, settings)
-	}
-
-	// If agent is already assigned, mark as picked up
-	if agentID != nil {
-		a.UpdateSLAOnPickup(&transfer)
-	}
-
-	if err := a.DB.Create(&transfer).Error; err != nil {
+	if err := a.saveAndFinalizeTransfer(&transfer, account, contact, settings, true); err != nil {
 		a.Log.Error("Failed to create team transfer", "error", err, "contact_id", contact.ID, "team_id", teamID)
 		return
 	}
-
-	// Update contact assignment if agent assigned
-	if agentID != nil {
-		a.DB.Model(&contact).Update("assigned_user_id", agentID)
-	}
-
-	// End any active chatbot session
-	a.DB.Model(&models.ChatbotSession{}).
-		Where("organization_id = ? AND contact_id = ? AND status = ?", account.OrganizationID, contact.ID, models.SessionStatusActive).
-		Updates(map[string]any{
-			"status":       models.SessionStatusCancelled,
-			"completed_at": time.Now(),
-		})
 
 	var agentIDStrLog string
 	if agentID != nil {
@@ -1455,9 +1401,6 @@ func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *mod
 		"agent_id", agentIDStrLog,
 		"source", source,
 	)
-
-	// Broadcast to WebSocket
-	a.broadcastTransferCreated(&transfer, contact)
 }
 
 

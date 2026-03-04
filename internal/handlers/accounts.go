@@ -185,11 +185,10 @@ func (a *App) UpdateAccount(r *fastglue.Request) error {
 		return nil
 	}
 
-	account, err := findByIDAndOrg[models.WhatsAppAccount](a.DB, r, id, orgID, "Account")
+	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
 		return nil
 	}
-	a.decryptAccountSecrets(account)
 
 	var req AccountRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -300,11 +299,10 @@ func (a *App) TestAccountConnection(r *fastglue.Request) error {
 		return nil
 	}
 
-	account, err := findByIDAndOrg[models.WhatsAppAccount](a.DB, r, id, orgID, "Account")
+	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
 		return nil
 	}
-	a.decryptAccountSecrets(account)
 
 	// Use the comprehensive validation function
 	if err := a.validateAccountCredentials(account.PhoneID, account.BusinessID, account.AccessToken, account.APIVersion); err != nil {
@@ -319,7 +317,11 @@ func (a *App) TestAccountConnection(r *fastglue.Request) error {
 	url := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier",
 		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID)
 
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		a.Log.Error("Failed to create request", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to test account", nil, "")
+	}
 	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 
 	resp, err := a.HTTPClient.Do(req)
@@ -425,11 +427,10 @@ func (a *App) SubscribeApp(r *fastglue.Request) error {
 		return nil
 	}
 
-	account, err := findByIDAndOrg[models.WhatsAppAccount](a.DB, r, id, orgID, "Account")
+	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
 		return nil
 	}
-	a.decryptAccountSecrets(account)
 
 	// Subscribe the app to webhooks
 	ctx := context.Background()

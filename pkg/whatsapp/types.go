@@ -1,6 +1,10 @@
 package whatsapp
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // Account represents WhatsApp Business Account credentials
 type Account struct {
@@ -41,6 +45,24 @@ type MetaAPIError struct {
 	} `json:"error"`
 }
 
+// ParseError attempts to parse respBody as a Meta API error. If successful,
+// it returns a formatted error including code, message, details, and user message.
+// If parsing fails, it returns a generic error with the status code and raw body.
+func ParseMetaAPIError(statusCode int, respBody []byte) error {
+	var apiErr MetaAPIError
+	if err := json.Unmarshal(respBody, &apiErr); err == nil && apiErr.Error.Message != "" {
+		errMsg := fmt.Sprintf("API error %d: %s", apiErr.Error.Code, apiErr.Error.Message)
+		if apiErr.Error.ErrorData.Details != "" {
+			errMsg += " - Details: " + apiErr.Error.ErrorData.Details
+		}
+		if apiErr.Error.ErrorUserMsg != "" {
+			errMsg += " - " + apiErr.Error.ErrorUserMsg
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+	return fmt.Errorf("API returned status %d: %s", statusCode, string(respBody))
+}
+
 // TemplateResponse represents response from template submission
 type TemplateResponse struct {
 	ID string `json:"id"`
@@ -76,8 +98,9 @@ type TemplateButton struct {
 
 // TemplateExample represents example values for template variables
 type TemplateExample struct {
-	HeaderText []string   `json:"header_text,omitempty"`
-	BodyText   [][]string `json:"body_text,omitempty"`
+	HeaderText   []string   `json:"header_text,omitempty"`
+	HeaderHandle []string   `json:"header_handle,omitempty"`
+	BodyText     [][]string `json:"body_text,omitempty"`
 }
 
 // TemplateListResponse represents response from fetching templates

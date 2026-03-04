@@ -50,9 +50,12 @@ func (a *App) WebhookVerify(r *fastglue.Request) error {
 
 // WebhookStatusError represents an error in a status update
 type WebhookStatusError struct {
-	Code    int    `json:"code"`
-	Title   string `json:"title"`
-	Message string `json:"message"`
+	Code      int    `json:"code"`
+	Title     string `json:"title"`
+	Message   string `json:"message"`
+	ErrorData struct {
+		Details string `json:"details"`
+	} `json:"error_data"`
 }
 
 // TemplateStatusUpdate represents a template status update from Meta webhook
@@ -164,6 +167,12 @@ type WebhookPayload struct {
 							Body         string `json:"body"`
 							Name         string `json:"name"`
 						} `json:"nfm_reply,omitempty"`
+						CallPermissionReply *struct {
+							Response            string      `json:"response"`
+							IsPermanent         bool        `json:"is_permanent"`
+							ExpirationTimestamp json.Number `json:"expiration_timestamp,omitempty"`
+							ResponseSource      string      `json:"response_source"`
+						} `json:"call_permission_reply,omitempty"`
 					} `json:"interactive,omitempty"`
 					Reaction *struct {
 						MessageID string `json:"message_id"`
@@ -192,6 +201,28 @@ type WebhookPayload struct {
 					} `json:"context,omitempty"`
 				} `json:"messages,omitempty"`
 				Statuses []WebhookStatus `json:"statuses,omitempty"`
+			Calls []struct {
+				ID        string `json:"id"`
+				From      string `json:"from"`
+				To        string `json:"to"`
+				Timestamp string `json:"timestamp"`
+				Type      string `json:"type"`
+				Event     string `json:"event"`
+				Direction string `json:"direction,omitempty"`
+				Session   *struct {
+					SDPType string `json:"sdp_type"`
+					SDP     string `json:"sdp"`
+				} `json:"session,omitempty"`
+				Error *struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error,omitempty"`
+				// Terminate webhook fields
+				Status    json.RawMessage `json:"status,omitempty"`
+				StartTime string          `json:"start_time,omitempty"`
+				EndTime   string          `json:"end_time,omitempty"`
+				Duration  int             `json:"duration,omitempty"`
+			} `json:"calls,omitempty"`
 			} `json:"value"`
 			Field string `json:"field"`
 		} `json:"changes"`
@@ -227,6 +258,37 @@ func (a *App) WebhookHandler(r *fastglue.Request) error {
 				continue
 			}
 
+			// Handle voice call events (processed sequentially to preserve event order
+			// and avoid race conditions between ringing/connect for the same call)
+			if change.Field == "calls" {
+				phoneNumberID := change.Value.Metadata.PhoneNumberID
+				for _, call := range change.Value.Calls {
+					a.Log.Info("Received call event",
+						"call_id", call.ID,
+						"from", call.From,
+						"event", call.Event,
+						"direction", call.Direction,
+						"has_sdp", call.Session != nil && call.Session.SDP != "",
+						"phone_number_id", phoneNumberID,
+					)
+					a.processCallWebhook(phoneNumberID, call)
+				}
+
+				// Business-initiated call status webhooks (RINGING/ACCEPTED/REJECTED)
+				// arrive in the statuses array under field="calls"
+				for _, status := range change.Value.Statuses {
+					if status.Status == "" {
+						continue
+					}
+					a.Log.Info("Received call status event",
+						"call_id", status.ID,
+						"status", status.Status,
+					)
+					a.processCallStatusWebhook(status)
+				}
+				continue
+			}
+
 			if change.Field != "messages" {
 				continue
 			}
@@ -253,6 +315,25 @@ func (a *App) WebhookHandler(r *fastglue.Request) error {
 					"type", msg.Type,
 					"phone_number_id", phoneNumberID,
 				)
+
+				// Handle call permission replies before regular message processing
+				if msg.Type == "interactive" && msg.Interactive != nil &&
+					msg.Interactive.Type == "call_permission_reply" &&
+					msg.Interactive.CallPermissionReply != nil {
+					cpr := msg.Interactive.CallPermissionReply
+					expTS, err := cpr.ExpirationTimestamp.Int64()
+					if err != nil {
+						a.Log.Error("Failed to parse call permission expiration timestamp", "error", err, "from", msg.From)
+						continue
+					}
+					go a.processCallPermissionReply(phoneNumberID, msg.From, &CallPermissionReplyData{
+						Response:            cpr.Response,
+						IsPermanent:         cpr.IsPermanent,
+						ExpirationTimestamp: expTS,
+						ResponseSource:      cpr.ResponseSource,
+					})
+					continue
+				}
 
 				// Get contact profile name
 				profileName := ""
@@ -403,7 +484,16 @@ func (a *App) updateMessageStatus(whatsappMsgID, statusValue string, errors []We
 	case models.MessageStatusFailed:
 		updates["status"] = models.MessageStatusFailed
 		if len(errors) > 0 {
-			updates["error_message"] = errors[0].Message
+			// Prefer error_data.details (most descriptive), then Message, then Title.
+			errText := errors[0].ErrorData.Details
+			if errText == "" {
+				errText = errors[0].Message
+			}
+			if errText == "" || errText == errors[0].Title {
+				errText = errors[0].Title
+			}
+
+			updates["error_message"] = errText
 		}
 	default:
 		a.Log.Debug("Ignoring message status update", "status", statusValue)
@@ -440,12 +530,16 @@ func (a *App) updateMessageStatus(whatsappMsgID, statusValue string, errors []We
 
 	// Broadcast status update via WebSocket
 	if a.WSHub != nil {
+		wsPayload := map[string]any{
+			"message_id": message.ID.String(),
+			"status":     statusValue,
+		}
+		if errMsg, ok := updates["error_message"].(string); ok && errMsg != "" {
+			wsPayload["error_message"] = errMsg
+		}
 		a.WSHub.BroadcastToOrg(message.OrganizationID, websocket.WSMessage{
-			Type: websocket.TypeStatusUpdate,
-			Payload: map[string]any{
-				"message_id": message.ID.String(),
-				"status":     statusValue,
-			},
+			Type:    websocket.TypeStatusUpdate,
+			Payload: wsPayload,
 		})
 	}
 }

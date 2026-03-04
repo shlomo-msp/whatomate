@@ -105,6 +105,12 @@ func GetMigrationModels() []MigrationModel {
 
 		// Conversation Notes
 		{"ConversationNote", &models.ConversationNote{}},
+
+		// Calling / IVR
+		{"CallLog", &models.CallLog{}},
+		{"IVRFlow", &models.IVRFlow{}},
+		{"CallTransfer", &models.CallTransfer{}},
+		{"CallPermission", &models.CallPermission{}},
 	}
 }
 
@@ -198,6 +204,12 @@ func RunMigrationWithProgress(db *gorm.DB, adminCfg *config.DefaultAdminConfig) 
 		return err
 	}
 
+	// Backfill last_inbound_at from existing messages
+	if err := BackfillLastInboundAt(silentDB); err != nil {
+		fmt.Printf("\n  \033[31m✗ Failed to backfill last_inbound_at\033[0m\n\n")
+		return err
+	}
+
 	printProgress(currentStep, totalSteps)
 	fmt.Printf("\n  \033[32m✓ Migration completed\033[0m\n\n")
 
@@ -263,6 +275,13 @@ func getIndexes() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_org_unique ON user_organizations(user_id, organization_id) WHERE deleted_at IS NULL`,
 		// Conversation notes
 		`CREATE INDEX IF NOT EXISTS idx_conversation_notes_contact ON conversation_notes(organization_id, contact_id, created_at DESC)`,
+		// Call logs
+		`CREATE INDEX IF NOT EXISTS idx_call_logs_org_status ON call_logs(organization_id, status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_call_logs_contact ON call_logs(contact_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_call_logs_wa_call_id ON call_logs(whatsapp_call_id) WHERE whatsapp_call_id != ''`,
+		// IVR flows
+		`CREATE INDEX IF NOT EXISTS idx_ivr_flows_org_active ON ivr_flows(organization_id, whatsapp_account, is_active)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ivr_flows_org_call_start ON ivr_flows(organization_id, whatsapp_account) WHERE is_call_start = true AND is_active = true AND deleted_at IS NULL`,
 	}
 }
 
@@ -362,6 +381,22 @@ func MigrateUserOrganizations(db *gorm.DB) error {
 		FROM users u
 		LEFT JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = u.organization_id AND uo.deleted_at IS NULL
 		WHERE uo.id IS NULL AND u.deleted_at IS NULL
+	`).Error
+}
+
+// BackfillLastInboundAt sets last_inbound_at for existing contacts from their
+// most recent incoming message. Only updates contacts where the field is NULL.
+func BackfillLastInboundAt(db *gorm.DB) error {
+	return db.Exec(`
+		UPDATE contacts c
+		SET last_inbound_at = sub.max_created
+		FROM (
+			SELECT contact_id, MAX(created_at) AS max_created
+			FROM messages
+			WHERE direction = 'incoming' AND deleted_at IS NULL
+			GROUP BY contact_id
+		) sub
+		WHERE c.id = sub.contact_id AND c.last_inbound_at IS NULL AND c.deleted_at IS NULL
 	`).Error
 }
 

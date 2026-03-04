@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/crypto"
+	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"gorm.io/gorm"
 )
 
@@ -339,6 +341,22 @@ func (WhatsAppAccount) TableName() string {
 	return "whatsapp_accounts"
 }
 
+// ToWAAccount converts the model to the whatsapp client's Account type.
+func (a *WhatsAppAccount) ToWAAccount() *whatsapp.Account {
+	return &whatsapp.Account{
+		PhoneID:     a.PhoneID,
+		BusinessID:  a.BusinessID,
+		AppID:       a.AppID,
+		APIVersion:  a.APIVersion,
+		AccessToken: a.AccessToken,
+	}
+}
+
+// DecryptSecrets decrypts the encrypted access token and app secret fields.
+func (a *WhatsAppAccount) DecryptSecrets(encryptionKey string) {
+	crypto.DecryptFields(encryptionKey, &a.AccessToken, &a.AppSecret)
+}
+
 // Contact represents a WhatsApp contact/profile
 type Contact struct {
 	BaseModel
@@ -352,6 +370,7 @@ type Contact struct {
 	IsRead             bool       `gorm:"default:true" json:"is_read"`
 	Tags               JSONBArray `gorm:"type:jsonb;default:'[]'" json:"tags"`
 	Metadata           JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
+	LastInboundAt      *time.Time `json:"last_inbound_at,omitempty"` // When customer last sent a message (for 24h window tracking)
 
 	// Chatbot SLA tracking
 	ChatbotLastMessageAt *time.Time `json:"chatbot_last_message_at,omitempty"` // When chatbot last sent a message

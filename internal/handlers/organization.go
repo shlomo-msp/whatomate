@@ -13,12 +13,17 @@ import (
 
 // OrganizationSettings represents the settings structure
 type OrganizationSettings struct {
-	MaskPhoneNumbers       bool `json:"mask_phone_numbers"`
+	MaskPhoneNumbers       bool   `json:"mask_phone_numbers"`
 	Timezone               string `json:"timezone"`
 	DateFormat             string `json:"date_format"`
-	AutoDeleteMediaEnabled bool `json:"auto_delete_media_enabled"`
-	AutoDeleteMediaDays    int  `json:"auto_delete_media_days"`
-	RequireTwoFA           bool `json:"require_2fa"`
+	AutoDeleteMediaEnabled bool   `json:"auto_delete_media_enabled"`
+	AutoDeleteMediaDays    int    `json:"auto_delete_media_days"`
+	RequireTwoFA           bool   `json:"require_2fa"`
+	CallingEnabled         bool   `json:"calling_enabled"`
+	MaxCallDuration        int    `json:"max_call_duration"`
+	TransferTimeoutSecs    int    `json:"transfer_timeout_secs"`
+	HoldMusicFile          string `json:"hold_music_file"`
+	RingbackFile           string `json:"ringback_file"`
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -41,6 +46,11 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		AutoDeleteMediaEnabled: false,
 		AutoDeleteMediaDays:    30,
 		RequireTwoFA:           false,
+		CallingEnabled:         false,
+		MaxCallDuration:        callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600),
+		TransferTimeoutSecs:    callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60),
+		HoldMusicFile:          a.Config.Calling.HoldMusicFile,
+		RingbackFile:           a.Config.Calling.RingbackFile,
 	}
 
 	if org.Settings != nil {
@@ -61,6 +71,21 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		}
 		if v, ok := org.Settings["require_2fa"].(bool); ok {
 			settings.RequireTwoFA = v
+		}
+		if v, ok := org.Settings["calling_enabled"].(bool); ok {
+			settings.CallingEnabled = v
+		}
+		if v, ok := org.Settings["max_call_duration"].(float64); ok && v > 0 {
+			settings.MaxCallDuration = int(v)
+		}
+		if v, ok := org.Settings["transfer_timeout_secs"].(float64); ok && v > 0 {
+			settings.TransferTimeoutSecs = int(v)
+		}
+		if v, ok := org.Settings["hold_music_file"].(string); ok && v != "" {
+			settings.HoldMusicFile = v
+		}
+		if v, ok := org.Settings["ringback_file"].(string); ok && v != "" {
+			settings.RingbackFile = v
 		}
 	}
 
@@ -85,6 +110,11 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 		AutoDeleteMediaDays    *int    `json:"auto_delete_media_days"`
 		RequireTwoFA           *bool   `json:"require_2fa"`
 		Name                   *string `json:"name"`
+		CallingEnabled         *bool   `json:"calling_enabled"`
+		MaxCallDuration        *int    `json:"max_call_duration"`
+		TransferTimeoutSecs    *int    `json:"transfer_timeout_secs"`
+		HoldMusicFile          *string `json:"hold_music_file"`
+		RingbackFile           *string `json:"ringback_file"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -118,6 +148,21 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.RequireTwoFA != nil {
 		org.Settings["require_2fa"] = *req.RequireTwoFA
+	}
+	if req.CallingEnabled != nil {
+		org.Settings["calling_enabled"] = *req.CallingEnabled
+	}
+	if req.MaxCallDuration != nil && *req.MaxCallDuration > 0 {
+		org.Settings["max_call_duration"] = *req.MaxCallDuration
+	}
+	if req.TransferTimeoutSecs != nil && *req.TransferTimeoutSecs > 0 {
+		org.Settings["transfer_timeout_secs"] = *req.TransferTimeoutSecs
+	}
+	if req.HoldMusicFile != nil {
+		org.Settings["hold_music_file"] = *req.HoldMusicFile
+	}
+	if req.RingbackFile != nil {
+		org.Settings["ringback_file"] = *req.RingbackFile
 	}
 	if req.Name != nil && *req.Name != "" {
 		org.Name = *req.Name
@@ -230,6 +275,61 @@ func (a *App) CreateOrganization(r *fastglue.Request) error {
 	})
 }
 
+// IsCallingEnabledForOrg checks if calling is enabled for an organization.
+// Both the global CallManager and the per-org setting must be active.
+func (a *App) IsCallingEnabledForOrg(orgID interface{}) bool {
+	if a.CallManager == nil {
+		return false
+	}
+	var org models.Organization
+	if err := a.DB.Where("id = ?", orgID).First(&org).Error; err != nil {
+		return false
+	}
+	if org.Settings != nil {
+		if v, ok := org.Settings["calling_enabled"].(bool); ok {
+			return v
+		}
+	}
+	return false
+}
+
+// requireCallingEnabled checks if calling is enabled for the org and returns an error
+// envelope if not. Returns nil when calling is enabled and the handler can proceed.
+func (a *App) requireCallingEnabled(r *fastglue.Request, orgID uuid.UUID) error {
+	if !a.IsCallingEnabledForOrg(orgID) {
+		return r.SendErrorEnvelope(fasthttp.StatusServiceUnavailable, "Calling is not enabled for this organization", nil, "")
+	}
+	return nil
+}
+
+// GetOrgCallingConfig returns org-level calling config values, falling back to global defaults.
+func (a *App) GetOrgCallingConfig(orgID interface{}) (maxDuration, transferTimeout int) {
+	maxDuration = callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600)
+	transferTimeout = callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60)
+
+	var org models.Organization
+	if err := a.DB.Where("id = ?", orgID).First(&org).Error; err != nil {
+		return
+	}
+	if org.Settings != nil {
+		if v, ok := org.Settings["max_call_duration"].(float64); ok && v > 0 {
+			maxDuration = int(v)
+		}
+		if v, ok := org.Settings["transfer_timeout_secs"].(float64); ok && v > 0 {
+			transferTimeout = int(v)
+		}
+	}
+	return
+}
+
+// callingConfigDefault returns val if positive, otherwise fallback.
+func callingConfigDefault(val, fallback int) int {
+	if val > 0 {
+		return val
+	}
+	return fallback
+}
+
 // MaskPhoneNumber masks a phone number showing only last 4 digits
 func MaskPhoneNumber(phone string) string {
 	if len(phone) <= 4 {
@@ -264,6 +364,15 @@ func MaskIfPhoneNumber(s string) string {
 		return MaskPhoneNumber(s)
 	}
 	return s
+}
+
+// MaskContactFields conditionally masks a profile name and phone number
+// if phone masking is enabled for the given organization.
+func (a *App) MaskContactFields(orgID interface{}, profileName, phoneNumber string) (string, string) {
+	if a.ShouldMaskPhoneNumbers(orgID) {
+		return MaskIfPhoneNumber(profileName), MaskPhoneNumber(phoneNumber)
+	}
+	return profileName, phoneNumber
 }
 
 // ShouldMaskPhoneNumbers checks if phone masking is enabled for the organization

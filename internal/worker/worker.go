@@ -88,6 +88,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
 		return nil // Don't retry, mark as failed
 	}
+	w.decryptAccountSecrets(&account)
 
 	// Get or create contact for this recipient
 	contact, _, err := contactutil.GetOrCreateContact(w.DB, job.OrganizationID, job.PhoneNumber, job.RecipientName)
@@ -238,12 +239,7 @@ func (w *Worker) checkCampaignCompletion(ctx context.Context, campaignID, organi
 
 // sendTemplateMessage sends a template message via WhatsApp Cloud API
 func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsAppAccount, template *models.Template, recipient *models.BulkMessageRecipient, campaignHeaderMediaID string) (string, error) {
-	waAccount := &whatsapp.Account{
-		PhoneID:     account.PhoneID,
-		BusinessID:  account.BusinessID,
-		APIVersion:  account.APIVersion,
-		AccessToken: account.AccessToken,
-	}
+	waAccount := account.ToWAAccount()
 
 	// Build template components with parameters
 	var components []map[string]interface{}
@@ -287,7 +283,7 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 		})
 	}
 
-	return w.WhatsApp.SendTemplateMessageWithComponents(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
+	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
 }
 
 // buildMediaParameter creates a media parameter for WhatsApp template headers.
@@ -310,6 +306,15 @@ func buildMediaParameter(headerType, keyName, value string) map[string]interface
 			keyName: value,
 		},
 	}
+}
+
+// decryptAccountSecrets decrypts the encrypted secrets on a WhatsApp account.
+func (w *Worker) decryptAccountSecrets(account *models.WhatsAppAccount) {
+	var key string
+	if w.Config != nil {
+		key = w.Config.App.EncryptionKey
+	}
+	account.DecryptSecrets(key)
 }
 
 // Close cleans up worker resources

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/crypto"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"gorm.io/gorm"
@@ -255,13 +254,7 @@ func (a *App) getWhatsAppAccountCached(phoneID string) (*models.WhatsAppAccount,
 // decryptAccountSecrets decrypts the encrypted secrets on a WhatsApp account.
 // Handles both encrypted ("enc:" prefixed) and legacy unencrypted values transparently.
 func (a *App) decryptAccountSecrets(account *models.WhatsAppAccount) {
-	encKey := a.Config.App.EncryptionKey
-	if dec, err := crypto.Decrypt(account.AccessToken, encKey); err == nil {
-		account.AccessToken = dec
-	}
-	if dec, err := crypto.Decrypt(account.AppSecret, encKey); err == nil {
-		account.AppSecret = dec
-	}
+	account.DecryptSecrets(a.Config.App.EncryptionKey)
 }
 
 // InvalidateWhatsAppAccountCache invalidates the WhatsApp account cache

@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/contactutil"
 	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 )
 
@@ -28,7 +27,7 @@ type IncomingTextMessage struct {
 	MediaIDOverride       string `json:"-"`
 	MediaMimeTypeOverride string `json:"-"`
 	MediaFilenameOverride string `json:"-"`
-	Text      *struct {
+	Text                  *struct {
 		Body string `json:"body"`
 	} `json:"text,omitempty"`
 	Interactive *struct {
@@ -604,50 +603,104 @@ func (a *App) sendAndSaveTextMessage(account *models.WhatsAppAccount, contact *m
 	return err
 }
 
-// sendAndSaveInteractiveButtons sends an interactive button message and saves it to the database
-// Uses the unified SendOutgoingMessage for consistent behavior
+// sendAndSaveInteractiveButtons sends an interactive button message and saves it to the database.
+// Buttons with type "url" are automatically separated and sent as CTA URL messages,
+// since WhatsApp doesn't allow mixing reply buttons and URL buttons in the same message.
 func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, contact *models.Contact, bodyText string, buttons []map[string]interface{}) error {
-	// Convert buttons to whatsapp.Button format
-	waButtons := make([]whatsapp.Button, 0, len(buttons))
-	for i, btn := range buttons {
-		if i >= 10 {
-			break
+	// Separate reply buttons from CTA buttons (url / phone)
+	replyButtons := make([]map[string]interface{}, 0, len(buttons))
+	ctaButtons := make([]map[string]interface{}, 0)
+	for _, btn := range buttons {
+		btnType, _ := btn["type"].(string)
+		switch btnType {
+		case "url":
+			ctaButtons = append(ctaButtons, btn)
+		case "phone":
+			// Convert phone button to CTA URL with tel: scheme
+			phoneNumber, _ := btn["phone_number"].(string)
+			if phoneNumber != "" {
+				ctaButtons = append(ctaButtons, map[string]interface{}{
+					"title": btn["title"],
+					"url":   "tel:" + phoneNumber,
+				})
+			}
+		default:
+			replyButtons = append(replyButtons, btn)
 		}
-		buttonID, _ := btn["id"].(string)
-		buttonTitle, _ := btn["title"].(string)
-		if buttonID == "" {
-			buttonID = fmt.Sprintf("btn_%d", i+1)
-		}
-		if buttonTitle == "" {
-			continue
-		}
-		waButtons = append(waButtons, whatsapp.Button{
-			ID:    buttonID,
-			Title: buttonTitle,
-		})
 	}
 
-	// Fall back to text if no buttons
-	if len(waButtons) == 0 {
+	// WhatsApp doesn't allow mixing reply and CTA buttons.
+	// If both exist (legacy configs), ignore CTA buttons.
+	if len(replyButtons) > 0 && len(ctaButtons) > 0 {
+		ctaButtons = nil
+	}
+
+	// Send reply buttons (with the body text)
+	if len(replyButtons) > 0 {
+		waButtons := make([]whatsapp.Button, 0, len(replyButtons))
+		for i, btn := range replyButtons {
+			if i >= 10 {
+				break
+			}
+			buttonID, _ := btn["id"].(string)
+			buttonTitle, _ := btn["title"].(string)
+			if buttonID == "" {
+				buttonID = fmt.Sprintf("btn_%d", i+1)
+			}
+			if buttonTitle == "" {
+				continue
+			}
+			waButtons = append(waButtons, whatsapp.Button{
+				ID:    buttonID,
+				Title: buttonTitle,
+			})
+		}
+
+		if len(waButtons) > 0 {
+			interactiveType := "button"
+			if len(waButtons) > 3 {
+				interactiveType = "list"
+			}
+			ctx := context.Background()
+			if _, err := a.SendOutgoingMessage(ctx, OutgoingMessageRequest{
+				Account:         account,
+				Contact:         contact,
+				Type:            models.MessageTypeInteractive,
+				InteractiveType: interactiveType,
+				BodyText:        bodyText,
+				Buttons:         waButtons,
+			}, ChatbotSendOptions()); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Send CTA-only buttons (no reply buttons mixed in)
+	// WhatsApp allows max 2 CTA buttons, each sent as a separate cta_url message.
+	if len(ctaButtons) > 2 {
+		ctaButtons = ctaButtons[:2]
+	}
+	for i, ctaBtn := range ctaButtons {
+		btnTitle, _ := ctaBtn["title"].(string)
+		btnURL, _ := ctaBtn["url"].(string)
+		if btnTitle != "" && btnURL != "" {
+			// First CTA button carries the body text
+			ctaBody := bodyText
+			if i > 0 {
+				ctaBody = btnTitle
+			}
+			if err := a.sendAndSaveCTAURLButton(account, contact, ctaBody, btnTitle, btnURL); err != nil {
+				return err
+			}
+		}
+	}
+
+	// No buttons at all — fall back to text
+	if len(replyButtons) == 0 && len(ctaButtons) == 0 {
 		return a.sendAndSaveTextMessage(account, contact, bodyText)
 	}
 
-	// Determine interactive type based on button count
-	interactiveType := "button"
-	if len(waButtons) > 3 {
-		interactiveType = "list"
-	}
-
-	ctx := context.Background()
-	_, err := a.SendOutgoingMessage(ctx, OutgoingMessageRequest{
-		Account:         account,
-		Contact:         contact,
-		Type:            models.MessageTypeInteractive,
-		InteractiveType: interactiveType,
-		BodyText:        bodyText,
-		Buttons:         waButtons,
-	}, ChatbotSendOptions())
-	return err
+	return nil
 }
 
 // sendAndSaveCTAURLButton sends a CTA URL button message and saves it to the database
@@ -683,7 +736,6 @@ func (a *App) sendAndSaveFlowMessage(account *models.WhatsAppAccount, contact *m
 	}, ChatbotSendOptions())
 	return err
 }
-
 
 // getOrCreateSession finds an active session or creates a new one
 // Returns the session and a boolean indicating if it's a new session
@@ -1345,51 +1397,14 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 		// Send interactive buttons message
 		message = processTemplate(step.Message, session.SessionData)
 		if len(step.Buttons) > 0 {
-			// Separate reply buttons from URL buttons
-			// WhatsApp doesn't allow mixing them in the same message
-			replyButtons := make([]map[string]interface{}, 0)
-			urlButtons := make([]map[string]interface{}, 0)
-
+			buttons := make([]map[string]interface{}, 0, len(step.Buttons))
 			for _, btn := range step.Buttons {
 				if btnMap, ok := btn.(map[string]interface{}); ok {
-					btnType, _ := btnMap["type"].(string)
-					if btnType == "url" {
-						urlButtons = append(urlButtons, btnMap)
-					} else {
-						// Default to reply button
-						replyButtons = append(replyButtons, btnMap)
-					}
+					buttons = append(buttons, btnMap)
 				}
 			}
-
-			// Send reply buttons first (with the main message)
-			if len(replyButtons) > 0 {
-				if err := a.sendAndSaveInteractiveButtons(account, contact, message, replyButtons); err != nil {
-					a.Log.Error("Failed to send reply buttons", "error", err, "contact", contact.PhoneNumber)
-				}
-			} else if len(urlButtons) == 0 {
-				// No buttons at all, fall back to text
-				if err := a.sendAndSaveTextMessage(account, contact, message); err != nil {
-					a.Log.Error("Failed to send text message", "error", err, "contact", contact.PhoneNumber)
-				}
-			}
-
-			// Send URL buttons as separate CTA URL messages
-			// WhatsApp only allows one CTA URL button per message
-			for _, urlBtn := range urlButtons {
-				btnTitle, _ := urlBtn["title"].(string)
-				btnURL, _ := urlBtn["url"].(string)
-				if btnTitle != "" && btnURL != "" {
-					// Use empty body for subsequent URL buttons, or use message if no reply buttons
-					bodyText := ""
-					if len(replyButtons) == 0 {
-						bodyText = message
-						message = "" // Clear so we don't repeat it
-					}
-					if err := a.sendAndSaveCTAURLButton(account, contact, bodyText, btnTitle, btnURL); err != nil {
-						a.Log.Error("Failed to send CTA URL button", "error", err, "contact", contact.PhoneNumber)
-					}
-				}
+			if err := a.sendAndSaveInteractiveButtons(account, contact, message, buttons); err != nil {
+				a.Log.Error("Failed to send buttons", "error", err, "contact", contact.PhoneNumber)
 			}
 		} else {
 			// No buttons configured, fall back to text
@@ -1512,6 +1527,57 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 }
 
 // ApiResponse represents a response from an external API that may include buttons
+// executeConfiguredAPI builds and executes an HTTP request from a chatbot API config.
+// replaceVar is called to substitute variables in the URL, body, and header values.
+// Returns the response body and status code.
+func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(string) string) ([]byte, int, error) {
+	apiURL, ok := apiConfig["url"].(string)
+	if !ok || apiURL == "" {
+		return nil, 0, fmt.Errorf("API URL is required")
+	}
+	apiURL = replaceVar(apiURL)
+
+	method := "GET"
+	if m, ok := apiConfig["method"].(string); ok && m != "" {
+		method = strings.ToUpper(m)
+	}
+
+	var bodyReader io.Reader
+	if bodyTemplate, ok := apiConfig["body"].(string); ok && bodyTemplate != "" {
+		bodyReader = strings.NewReader(replaceVar(bodyTemplate))
+	}
+
+	req, err := http.NewRequest(method, apiURL, bodyReader)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	if headers, ok := apiConfig["headers"].(map[string]interface{}); ok {
+		for key, value := range headers {
+			if strVal, ok := value.(string); ok {
+				req.Header.Set(key, replaceVar(strVal))
+			}
+		}
+	}
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("API request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	limitReader := io.LimitReader(resp.Body, 1024*1024)
+	body, err := io.ReadAll(limitReader)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return body, resp.StatusCode, nil
+}
+
 type ApiResponse struct {
 	Message      string
 	Buttons      []map[string]interface{}
@@ -1526,64 +1592,14 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB,
 		return nil, fmt.Errorf("API config is empty")
 	}
 
-	// Get API URL (required)
-	apiURL, ok := apiConfig["url"].(string)
-	if !ok || apiURL == "" {
-		return nil, fmt.Errorf("API URL is required")
-	}
-
-	// Replace variables in URL using template engine
-	apiURL = processTemplate(apiURL, sessionData)
-
-	// Get HTTP method (default: GET)
-	method := "GET"
-	if m, ok := apiConfig["method"].(string); ok && m != "" {
-		method = strings.ToUpper(m)
-	}
-
-	// Prepare request body if configured
-	var bodyReader io.Reader
-	if bodyTemplate, ok := apiConfig["body"].(string); ok && bodyTemplate != "" {
-		bodyWithVars := processTemplate(bodyTemplate, sessionData)
-		bodyReader = strings.NewReader(bodyWithVars)
-	}
-
-	// Create request
-	req, err := http.NewRequest(method, apiURL, bodyReader)
+	replaceVar := func(s string) string { return processTemplate(s, sessionData) }
+	respBody, statusCode, err := a.executeConfiguredAPI(apiConfig, replaceVar)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
-	// Set default headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Add custom headers if configured
-	if headers, ok := apiConfig["headers"].(map[string]interface{}); ok {
-		for key, value := range headers {
-			if strVal, ok := value.(string); ok {
-				// Replace variables in header values
-				req.Header.Set(key, processTemplate(strVal, sessionData))
-			}
-		}
-	}
-
-	// Make the request
-	resp, err := a.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("API request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Read response body (limit to 1MB to prevent memory issues)
-	limitReader := io.LimitReader(resp.Body, 1024*1024)
-	respBody, err := io.ReadAll(limitReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, fmt.Errorf("API returned status %d: %s", statusCode, string(respBody))
 	}
 
 	// Parse JSON response
@@ -1731,12 +1747,6 @@ func (a *App) fetchAPIContext(apiConfig models.JSONB, session *models.ChatbotSes
 		return "", fmt.Errorf("API config is empty")
 	}
 
-	// Get API URL (required)
-	apiURL, ok := apiConfig["url"].(string)
-	if !ok || apiURL == "" {
-		return "", fmt.Errorf("API URL is required")
-	}
-
 	// Build session data for variable replacement
 	sessionData := models.JSONB{}
 	if session != nil {
@@ -1748,56 +1758,14 @@ func (a *App) fetchAPIContext(apiConfig models.JSONB, session *models.ChatbotSes
 		sessionData["user_message"] = userMessage
 	}
 
-	// Replace variables in URL
-	apiURL = a.replaceVariables(apiURL, sessionData)
-
-	// Get HTTP method (default: GET)
-	method := "GET"
-	if m, ok := apiConfig["method"].(string); ok && m != "" {
-		method = strings.ToUpper(m)
-	}
-
-	// Prepare request body if configured
-	var bodyReader io.Reader
-	if bodyTemplate, ok := apiConfig["body"].(string); ok && bodyTemplate != "" {
-		bodyWithVars := a.replaceVariables(bodyTemplate, sessionData)
-		bodyReader = strings.NewReader(bodyWithVars)
-	}
-
-	// Create request
-	req, err := http.NewRequest(method, apiURL, bodyReader)
+	replaceVar := func(s string) string { return a.replaceVariables(s, sessionData) }
+	respBody, statusCode, err := a.executeConfiguredAPI(apiConfig, replaceVar)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", err
 	}
 
-	// Set default headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Add custom headers if configured
-	if headers, ok := apiConfig["headers"].(map[string]interface{}); ok {
-		for key, value := range headers {
-			if strVal, ok := value.(string); ok {
-				req.Header.Set(key, a.replaceVariables(strVal, sessionData))
-			}
-		}
-	}
-
-	// Make the request
-	resp, err := a.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("API request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
+	if statusCode < 200 || statusCode >= 300 {
+		return "", fmt.Errorf("API returned status %d", statusCode)
 	}
 
 	// Check for response_path to extract specific field
@@ -2248,16 +2216,7 @@ func (a *App) handleIncomingReaction(account *models.WhatsAppAccount, fromPhone,
 	a.Log.Info("Updated message reaction", "message_id", message.ID, "reactions_count", len(newReactions))
 
 	// Broadcast via WebSocket
-	if a.WSHub != nil {
-		a.WSHub.BroadcastToOrg(account.OrganizationID, websocket.WSMessage{
-			Type: "reaction_update",
-			Payload: map[string]any{
-				"message_id": message.ID.String(),
-				"contact_id": contact.ID.String(),
-				"reactions":  newReactions,
-			},
-		})
-	}
+	a.broadcastReactionUpdate(account.OrganizationID, message.ID, contact.ID, newReactions)
 }
 
 // Helper function to safely get string from map
@@ -2381,57 +2340,13 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 		"last_message_preview": preview,
 		"is_read":              false,
 		"whats_app_account":    account.Name,
+		"last_inbound_at":      now,
 	})
 
 	a.Log.Info("Saved incoming message", "message_id", message.ID, "contact_id", contact.ID, "media_url", message.MediaURL)
 
 	// Broadcast new message via WebSocket
-	if a.WSHub != nil {
-		var assignedUserIDStr string
-		if contact.AssignedUserID != nil {
-			assignedUserIDStr = contact.AssignedUserID.String()
-		}
-		profileName := contact.ProfileName
-		if a.ShouldMaskPhoneNumbers(account.OrganizationID) {
-			profileName = MaskIfPhoneNumber(profileName)
-		}
-		wsPayload := map[string]any{
-			"id":               message.ID.String(),
-			"contact_id":       contact.ID.String(),
-			"assigned_user_id": assignedUserIDStr,
-			"profile_name":     profileName,
-			"direction":        message.Direction,
-			"message_type":     message.MessageType,
-			"content":          map[string]string{"body": message.Content},
-			"media_id":         message.MediaID,
-			"media_url":        message.MediaURL,
-			"media_mime_type":  message.MediaMimeType,
-			"media_filename":   message.MediaFilename,
-			"status":           message.Status,
-			"wamid":            message.WhatsAppMessageID,
-			"created_at":       message.CreatedAt,
-			"updated_at":       message.UpdatedAt,
-			"is_reply":         message.IsReply,
-		}
-		// Include reply context if this is a reply
-		if message.IsReply && message.ReplyToMessageID != nil {
-			wsPayload["reply_to_message_id"] = message.ReplyToMessageID.String()
-			// Load the replied-to message for preview
-			var replyToMsg models.Message
-			if err := a.DB.First(&replyToMsg, message.ReplyToMessageID).Error; err == nil {
-				wsPayload["reply_to_message"] = map[string]any{
-					"id":           replyToMsg.ID.String(),
-					"content":      map[string]string{"body": replyToMsg.Content},
-					"message_type": replyToMsg.MessageType,
-					"direction":    replyToMsg.Direction,
-				}
-			}
-		}
-		a.WSHub.BroadcastToOrg(account.OrganizationID, websocket.WSMessage{
-			Type:    websocket.TypeNewMessage,
-			Payload: wsPayload,
-		})
-	}
+	a.broadcastNewMessage(account.OrganizationID, &message, contact)
 
 	// Dispatch webhook for incoming message
 	a.DispatchWebhook(account.OrganizationID, models.WebhookEventMessageIncoming, MessageEventData{

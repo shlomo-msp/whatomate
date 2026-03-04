@@ -76,29 +76,12 @@ api.interceptors.response.use(
 
 // API service methods
 export const authService = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }),
-
-  register: (data: { email: string; password: string; full_name: string; organization_id: string }) =>
-    api.post('/auth/register', data),
-
-  logout: () => api.post('/auth/logout'),
-
-  refreshToken: (refreshToken: string) =>
-    api.post('/auth/refresh', { refresh_token: refreshToken }),
-
-  me: () => api.get('/auth/me'),
-
-  switchOrg: (organizationId: string) =>
-    api.post('/auth/switch-org', { organization_id: organizationId }),
-
   getWSToken: () => api.get('/auth/ws-token'),
 }
 
 export const usersService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get('/users', { params }),
-  get: (id: string) => api.get(`/users/${id}`),
   create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
     api.post('/users', data),
   update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean; totp_required?: boolean }) =>
@@ -131,11 +114,7 @@ export const apiKeysService = {
 }
 
 export const accountsService = {
-  list: () => api.get('/accounts'),
-  get: (id: string) => api.get(`/accounts/${id}`),
-  create: (data: any) => api.post('/accounts', data),
-  update: (id: string, data: any) => api.put(`/accounts/${id}`, data),
-  delete: (id: string) => api.delete(`/accounts/${id}`)
+  list: () => api.get('/accounts')
 }
 
 export const contactsService = {
@@ -212,14 +191,14 @@ export const dataService = {
 }
 
 export const messagesService = {
-  list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string }) =>
+  list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string; account?: string }) =>
     api.get(`/contacts/${contactId}/messages`, { params }),
   get: (messageId: string) =>
     api.get(`/messages/${messageId}`),
-  send: (contactId: string, data: { type: string; content: any; reply_to_message_id?: string }) =>
+  send: (contactId: string, data: { type: string; content: any; reply_to_message_id?: string; whatsapp_account?: string }) =>
     api.post(`/contacts/${contactId}/messages`, data),
-  sendTemplate: (contactId: string, data: { template_name: string; components?: any[] }) =>
-    api.post(`/contacts/${contactId}/messages/template`, data),
+  sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; account_name?: string }) =>
+    api.post('/messages/template', { contact_id: contactId, ...data }),
   sendReaction: (contactId: string, messageId: string, emoji: string) =>
     api.post(`/contacts/${contactId}/messages/${messageId}/reaction`, { emoji })
 }
@@ -228,10 +207,6 @@ export const templatesService = {
   list: (params?: { status?: string; category?: string; account?: string; search?: string; page?: number; limit?: number }) =>
     api.get<{ templates: any[]; total?: number }>('/templates', { params }),
   get: (id: string) => api.get(`/templates/${id}`),
-  create: (data: any) => api.post('/templates', data),
-  update: (id: string, data: any) => api.put(`/templates/${id}`, data),
-  delete: (id: string) => api.delete(`/templates/${id}`),
-  sync: () => api.post('/templates/sync'),
   uploadMedia: (accountName: string, file: File) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -247,13 +222,11 @@ export const templatesService = {
 export const flowsService = {
   list: (params?: { account?: string; search?: string; page?: number; limit?: number }) =>
     api.get<{ flows: any[]; total?: number }>('/flows', { params }),
-  get: (id: string) => api.get(`/flows/${id}`),
   create: (data: any) => api.post('/flows', data),
   update: (id: string, data: any) => api.put(`/flows/${id}`, data),
   delete: (id: string) => api.delete(`/flows/${id}`),
   saveToMeta: (id: string) => api.post(`/flows/${id}/save-to-meta`),
   publish: (id: string) => api.post(`/flows/${id}/publish`),
-  deprecate: (id: string) => api.post(`/flows/${id}/deprecate`),
   duplicate: (id: string) => api.post(`/flows/${id}/duplicate`),
   sync: (whatsappAccount: string) => api.post('/flows/sync', { whatsapp_account: whatsappAccount })
 }
@@ -261,7 +234,6 @@ export const flowsService = {
 export const campaignsService = {
   list: (params?: { status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) =>
     api.get('/campaigns', { params }),
-  get: (id: string) => api.get(`/campaigns/${id}`),
   create: (data: any) => api.post('/campaigns', data),
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
@@ -269,7 +241,6 @@ export const campaignsService = {
   pause: (id: string) => api.post(`/campaigns/${id}/pause`),
   cancel: (id: string) => api.post(`/campaigns/${id}/cancel`),
   retryFailed: (id: string) => api.post(`/campaigns/${id}/retry-failed`),
-  stats: (id: string) => api.get(`/campaigns/${id}/stats`),
   // Recipients
   getRecipients: (id: string) => api.get(`/campaigns/${id}/recipients`),
   addRecipients: (id: string, recipients: Array<{ phone_number: string; recipient_name?: string; template_params?: Record<string, any> }>) =>
@@ -298,7 +269,6 @@ export const chatbotService = {
   // Keywords
   listKeywords: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{ rules: any[]; total?: number }>('/chatbot/keywords', { params }),
-  getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
   createKeyword: (data: any) => api.post('/chatbot/keywords', data),
   updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
   deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
@@ -314,15 +284,9 @@ export const chatbotService = {
   // AI Contexts
   listAIContexts: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{ contexts: any[]; total?: number }>('/chatbot/ai-contexts', { params }),
-  getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
   createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
   updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
   deleteAIContext: (id: string) => api.delete(`/chatbot/ai-contexts/${id}`),
-
-  // Sessions
-  listSessions: (params?: { status?: string; contact_id?: string }) =>
-    api.get('/chatbot/sessions', { params }),
-  getSession: (id: string) => api.get(`/chatbot/sessions/${id}`),
 
   // Agent Transfers
   listTransfers: (params?: {
@@ -361,7 +325,6 @@ export interface CannedResponse {
 export const cannedResponsesService = {
   list: (params?: { category?: string; search?: string; active_only?: string; page?: number; limit?: number }) =>
     api.get<{ canned_responses: CannedResponse[]; total?: number }>('/canned-responses', { params }),
-  get: (id: string) => api.get(`/canned-responses/${id}`),
   create: (data: { name: string; shortcut?: string; content: string; category?: string }) =>
     api.post('/canned-responses', data),
   update: (id: string, data: { name?: string; shortcut?: string; content?: string; category?: string; is_active?: boolean }) =>
@@ -370,24 +333,9 @@ export const cannedResponsesService = {
   use: (id: string) => api.post(`/canned-responses/${id}/use`)
 }
 
-export const analyticsService = {
-  dashboard: (params?: { from?: string; to?: string }) =>
-    api.get('/analytics/dashboard', { params }),
-  messages: (params?: { from?: string; to?: string; group_by?: string }) =>
-    api.get('/analytics/messages', { params }),
-  campaigns: (params?: { from?: string; to?: string }) =>
-    api.get('/analytics/campaigns', { params }),
-  chatbot: (params?: { from?: string; to?: string }) =>
-    api.get('/analytics/chatbot', { params })
-}
-
 export const agentAnalyticsService = {
   getSummary: (params?: { from?: string; to?: string; agent_id?: string }) =>
-    api.get('/analytics/agents', { params }),
-  getAgentDetails: (id: string, params?: { from?: string; to?: string }) =>
-    api.get(`/analytics/agents/${id}`, { params }),
-  getComparison: (params?: { from?: string; to?: string }) =>
-    api.get('/analytics/agents/comparison', { params })
+    api.get('/analytics/agents', { params })
 }
 
 // Meta WhatsApp Analytics Types
@@ -413,7 +361,7 @@ export interface MetaMessagingDataPoint {
   delivered: number
 }
 
-export interface MetaConversationDataPoint {
+interface MetaConversationDataPoint {
   start: number
   end: number
   conversation: number
@@ -434,12 +382,12 @@ export interface MetaPricingDataPoint {
   tier?: string                 // Pricing tier
 }
 
-export interface MetaTemplateCostItem {
+interface MetaTemplateCostItem {
   type: string    // amount_spent, cost_per_delivered, cost_per_url_button_click
   value?: number  // The cost value
 }
 
-export interface MetaTemplateClickItem {
+interface MetaTemplateClickItem {
   type: string           // quick_reply_button, unique_url_button
   button_content: string // The button text
   count: number          // Number of clicks
@@ -466,7 +414,7 @@ export interface MetaCallDataPoint {
   call_direction: string
 }
 
-export interface MetaAnalyticsData {
+interface MetaAnalyticsData {
   id: string
   analytics?: {
     granularity: string
@@ -562,7 +510,7 @@ export interface WidgetData {
   }>
 }
 
-export interface DataSourceInfo {
+interface DataSourceInfo {
   name: string
   label: string
   fields: string[]
@@ -578,7 +526,6 @@ export interface LayoutItem {
 
 export const widgetsService = {
   list: () => api.get<{ widgets: DashboardWidget[] }>('/widgets'),
-  get: (id: string) => api.get<DashboardWidget>(`/widgets/${id}`),
   create: (data: {
     name: string
     description?: string
@@ -612,8 +559,6 @@ export const widgetsService = {
     is_shared: boolean
   }>) => api.put<DashboardWidget>(`/widgets/${id}`, data),
   delete: (id: string) => api.delete(`/widgets/${id}`),
-  getData: (id: string, params?: { from?: string; to?: string }) =>
-    api.get<WidgetData>(`/widgets/${id}/data`, { params }),
   getAllData: (params?: { from?: string; to?: string }) =>
     api.get<{ data: Record<string, WidgetData> }>('/widgets/data', { params }),
   getDataSources: () => api.get<{
@@ -636,7 +581,19 @@ export const organizationService = {
     auto_delete_media_days?: number
     require_2fa?: boolean
     name?: string
-  }) => api.put('/org/settings', data)
+    calling_enabled?: boolean
+    max_call_duration?: number
+    transfer_timeout_secs?: number
+    hold_music_file?: string
+    ringback_file?: string
+  }) => api.put('/org/settings', data),
+  uploadOrgAudio: (file: File, type: 'hold_music' | 'ringback') => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post(`/org/audio?type=${type}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
 }
 
 // Organizations
@@ -649,7 +606,6 @@ export interface Organization {
 
 export const organizationsService = {
   list: () => api.get<{ organizations: Organization[] }>('/organizations'),
-  getCurrent: () => api.get<Organization>('/organizations/current'),
   create: (data: { name: string }) => api.post('/organizations', data),
   delete: (id: string) => api.delete(`/organizations/${id}`),
   // Members
@@ -885,6 +841,176 @@ export const notesService = {
     api.put<ConversationNote>(`/contacts/${contactId}/notes/${noteId}`, data),
   delete: (contactId: string, noteId: string) =>
     api.delete(`/contacts/${contactId}/notes/${noteId}`)
+}
+
+// Calling - Call Logs & IVR Flows
+export interface CallLog {
+  id: string
+  organization_id: string
+  whatsapp_account: string
+  contact_id: string
+  whatsapp_call_id: string
+  caller_phone: string
+  direction: 'incoming' | 'outgoing'
+  status: 'ringing' | 'answered' | 'completed' | 'missed' | 'rejected' | 'failed' | 'initiating' | 'accepted' | 'transferring'
+  duration: number
+  ivr_flow_id?: string
+  ivr_path?: Record<string, any>
+  agent_id?: string
+  started_at?: string
+  answered_at?: string
+  ended_at?: string
+  disconnected_by?: 'client' | 'agent' | 'system'
+  error_message?: string
+  recording_s3_key?: string
+  recording_duration?: number
+  contact?: {
+    id: string
+    phone_number: string
+    profile_name: string
+  }
+  agent?: {
+    id: string
+    full_name: string
+    email: string
+  }
+  ivr_flow?: IVRFlow
+  created_at: string
+  updated_at: string
+}
+
+export interface IVRMenuOption {
+  label: string
+  action: 'transfer' | 'submenu' | 'parent' | 'repeat' | 'hangup' | 'goto_flow'
+  target?: string
+  menu?: IVRMenu
+}
+
+export interface IVRMenu {
+  greeting: string
+  greeting_text?: string
+  options: Record<string, IVRMenuOption>
+  timeout_seconds?: number
+  max_retries?: number
+  invalid_input_message?: string
+}
+
+export interface IVRFlow {
+  id: string
+  organization_id: string
+  whatsapp_account: string
+  name: string
+  description: string
+  is_active: boolean
+  is_call_start: boolean
+  menu: IVRMenu
+  welcome_audio_url: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CallTransfer {
+  id: string
+  organization_id: string
+  call_log_id: string
+  whatsapp_call_id: string
+  caller_phone: string
+  contact_id: string
+  whatsapp_account: string
+  status: 'waiting' | 'connected' | 'completed' | 'abandoned' | 'no_answer'
+  team_id?: string
+  agent_id?: string
+  transferred_at: string
+  connected_at?: string
+  completed_at?: string
+  hold_duration: number
+  talk_duration: number
+  ivr_path?: Record<string, any>
+  contact?: {
+    id: string
+    phone_number: string
+    profile_name: string
+  }
+  agent?: {
+    id: string
+    full_name: string
+    email: string
+  }
+  team?: {
+    id: string
+    name: string
+  }
+  call_log?: CallLog
+  created_at: string
+  updated_at: string
+}
+
+// Outgoing Calls
+export interface CallPermission {
+  id: string
+  contact_id: string
+  whatsapp_account: string
+  status: 'pending' | 'accepted' | 'declined' | 'expired'
+  message_id?: string
+  requested_at: string
+  responded_at?: string
+  expires_at?: string
+}
+
+export const outgoingCallsService = {
+  initiate: (data: { contact_id: string; whatsapp_account: string; sdp_offer: string }) =>
+    api.post<{ call_log_id: string; sdp_answer: string }>('/calls/outgoing', data),
+  hangup: (callLogId: string) =>
+    api.post(`/calls/outgoing/${callLogId}/hangup`),
+  requestPermission: (data: { contact_id: string; whatsapp_account: string }) =>
+    api.post<{ permission_id: string }>('/calls/permission-request', data),
+  getPermission: (contactId: string, whatsappAccount: string) =>
+    api.get<CallPermission>(`/calls/permission/${contactId}`, { params: { whatsapp_account: whatsappAccount } }),
+  getICEServers: () =>
+    api.get<{ ice_servers: Array<{ urls: string[]; username?: string; credential?: string }> }>('/calls/ice-servers'),
+}
+
+export const callLogsService = {
+  list: (params?: { status?: string; account?: string; contact_id?: string; direction?: string; ivr_flow_id?: string; phone?: string; from?: string; to?: string; page?: number; limit?: number }) =>
+    api.get<{ call_logs: CallLog[]; total: number }>('/call-logs', { params }),
+  get: (id: string) => api.get<CallLog>(`/call-logs/${id}`),
+  getRecordingURL: (id: string) =>
+    api.get<{ url: string; duration: number }>(`/call-logs/${id}/recording`)
+}
+
+export const callTransfersService = {
+  list: (params?: { status?: string; page?: number; limit?: number }) =>
+    api.get<{ call_transfers: CallTransfer[]; total: number }>('/call-transfers', { params }),
+  get: (id: string) => api.get<CallTransfer>(`/call-transfers/${id}`),
+  connect: (id: string, sdpOffer: string) =>
+    api.post<{ sdp_answer: string }>(`/call-transfers/${id}/connect`, { sdp_offer: sdpOffer }),
+  hangup: (id: string) =>
+    api.post(`/call-transfers/${id}/hangup`),
+}
+
+export const ivrFlowsService = {
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ ivr_flows: IVRFlow[]; total: number }>('/ivr-flows', { params }),
+  get: (id: string) => api.get<IVRFlow>(`/ivr-flows/${id}`),
+  create: (data: { whatsapp_account: string; name: string; description?: string; is_call_start?: boolean; menu: IVRMenu; welcome_audio_url?: string }) =>
+    api.post<IVRFlow>('/ivr-flows', data),
+  update: (id: string, data: { name?: string; description?: string; is_active?: boolean; is_call_start?: boolean; menu?: IVRMenu; welcome_audio_url?: string }) =>
+    api.put<IVRFlow>(`/ivr-flows/${id}`, data),
+  delete: (id: string) => api.delete(`/ivr-flows/${id}`),
+  uploadAudio: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const csrfToken = getCookie('whm_csrf')
+    const headers: Record<string, string> = {}
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken
+    const selectedOrgId = localStorage.getItem('selected_organization_id')
+    if (selectedOrgId) headers['X-Organization-ID'] = selectedOrgId
+    return axios.post(`${api.defaults.baseURL}/ivr-flows/audio`, formData, {
+      withCredentials: true,
+      headers,
+    })
+  },
+  getAudioUrl: (filename: string) => `${api.defaults.baseURL}/ivr-flows/audio/${encodeURIComponent(filename)}`
 }
 
 export default api
