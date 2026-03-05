@@ -14,11 +14,11 @@ import (
 // Note: is_super_admin is intentionally excluded to prevent mass assignment.
 // Super admin status changes are handled via parseSuperAdminField.
 type UserRequest struct {
-	Email    string     `json:"email"`
-	Password string     `json:"password"`
-	FullName string     `json:"full_name"`
-	RoleID   *uuid.UUID `json:"role_id"`
-	IsActive *bool      `json:"is_active"`
+	Email        string     `json:"email"`
+	Password     string     `json:"password"`
+	FullName     string     `json:"full_name"`
+	RoleID       *uuid.UUID `json:"role_id"`
+	IsActive     *bool      `json:"is_active"`
 	TOTPRequired *bool      `json:"totp_required"`
 }
 
@@ -616,9 +616,9 @@ func (a *App) GetCurrentUser(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "User not found", nil, "")
 	}
 
-	// Use org from JWT context (may differ from DB after org switch)
-	orgID, _ := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if orgID != uuid.Nil {
+	// Resolve effective org the same way as all permission checks (supports X-Organization-ID override).
+	orgID, err := a.getOrgID(r)
+	if err == nil && orgID != uuid.Nil {
 		user.OrganizationID = orgID
 
 		// Check for org-specific role from user_organizations
@@ -796,12 +796,12 @@ func userToResponse(user models.User) UserResponse {
 
 // MyOrganizationResponse represents an organization in the user's org list
 type MyOrganizationResponse struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Name           string    `json:"name"`
-	Slug           string    `json:"slug"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Name           string     `json:"name"`
+	Slug           string     `json:"slug"`
 	RoleID         *uuid.UUID `json:"role_id,omitempty"`
-	RoleName       string    `json:"role_name,omitempty"`
-	IsDefault      bool      `json:"is_default"`
+	RoleName       string     `json:"role_name,omitempty"`
+	IsDefault      bool       `json:"is_default"`
 }
 
 // ListMyOrganizations returns all organizations the current user belongs to
@@ -912,10 +912,10 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
-		"message":             "Availability updated successfully",
-		"is_available":        user.IsAvailable,
-		"status":              status,
-		"break_started_at":    breakStartedAt,
-		"transfers_to_queue":  transfersReturned,
+		"message":            "Availability updated successfully",
+		"is_available":       user.IsAvailable,
+		"status":             status,
+		"break_started_at":   breakStartedAt,
+		"transfers_to_queue": transfersReturned,
 	})
 }

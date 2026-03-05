@@ -612,19 +612,31 @@ func (a *App) InvalidateRolePermissionsCache(roleID uuid.UUID) {
 	roleCacheKey := fmt.Sprintf("%s%s", rolePermissionsCachePrefix, roleID.String())
 	a.Redis.Del(ctx, roleCacheKey)
 
-	// Find all users with this role and invalidate their cache
-	var users []models.User
-	if err := a.DB.Select("id, organization_id").Where("role_id = ?", roleID).Find(&users).Error; err != nil {
-		a.Log.Error("Failed to find users for role permission cache invalidation", "error", err, "role_id", roleID)
+	// Find all affected users:
+	// 1. users.role_id (home/default role)
+	// 2. user_organizations.role_id (org-specific role assignment)
+	var userIDs []uuid.UUID
+	if err := a.DB.Model(&models.User{}).Where("role_id = ?", roleID).Pluck("id", &userIDs).Error; err != nil {
+		a.Log.Error("Failed to find users by users.role_id for cache invalidation", "error", err, "role_id", roleID)
 		return
 	}
 
-	for _, user := range users {
-		userCacheKey := fmt.Sprintf("%s%s", userPermissionsCachePrefix, user.ID.String())
-		a.Redis.Del(ctx, userCacheKey)
+	var orgUserIDs []uuid.UUID
+	if err := a.DB.Model(&models.UserOrganization{}).Where("role_id = ?", roleID).Distinct().Pluck("user_id", &orgUserIDs).Error; err != nil {
+		a.Log.Error("Failed to find users by user_organizations.role_id for cache invalidation", "error", err, "role_id", roleID)
+		return
+	}
 
-		// Notify user via WebSocket to refresh their permissions
-		a.notifyUserPermissionsChanged(user.ID)
+	seen := make(map[uuid.UUID]struct{}, len(userIDs)+len(orgUserIDs))
+	for _, id := range userIDs {
+		seen[id] = struct{}{}
+	}
+	for _, id := range orgUserIDs {
+		seen[id] = struct{}{}
+	}
+
+	for userID := range seen {
+		a.InvalidateUserPermissionsCache(userID)
 	}
 }
 
