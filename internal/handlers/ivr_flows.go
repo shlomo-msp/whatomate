@@ -42,12 +42,14 @@ func (a *App) ListIVRFlows(r *fastglue.Request) error {
 	account := string(r.RequestCtx.QueryArgs().Peek("account"))
 
 	query := a.DB.Where("organization_id = ?", orgID).Order("created_at DESC")
+	countQuery := a.DB.Model(&models.IVRFlow{}).Where("organization_id = ?", orgID)
 	if account != "" {
 		query = query.Where("whatsapp_account = ?", account)
+		countQuery = countQuery.Where("whatsapp_account = ?", account)
 	}
 
 	var total int64
-	a.DB.Model(&models.IVRFlow{}).Where("organization_id = ?", orgID).Count(&total)
+	countQuery.Count(&total)
 
 	var flows []models.IVRFlow
 	if err := pg.Apply(query).Find(&flows).Error; err != nil {
@@ -337,23 +339,23 @@ func (a *App) UploadIVRAudio(r *fastglue.Request) error {
 	// Validate MIME type
 	mimeType := fileHeader.Header.Get("Content-Type")
 	allowedAudio := map[string]bool{
-		"audio/ogg":             true,
-		"audio/opus":            true,
-		"audio/mpeg":            true,
-		"audio/mp3":             true,
-		"audio/aac":             true,
-		"audio/mp4":             true,
-		"audio/wav":             true,
-		"audio/x-wav":           true,
-		"audio/wave":            true,
-		"audio/webm":            true,
-		"audio/flac":            true,
-		"audio/x-flac":          true,
-		"audio/x-m4a":           true,
-		"audio/m4a":             true,
-		"application/ogg":       true,
+		"audio/ogg":                true,
+		"audio/opus":               true,
+		"audio/mpeg":               true,
+		"audio/mp3":                true,
+		"audio/aac":                true,
+		"audio/mp4":                true,
+		"audio/wav":                true,
+		"audio/x-wav":              true,
+		"audio/wave":               true,
+		"audio/webm":               true,
+		"audio/flac":               true,
+		"audio/x-flac":             true,
+		"audio/x-m4a":              true,
+		"audio/m4a":                true,
+		"application/ogg":          true,
 		"application/octet-stream": true, // fallback for unknown audio
-		"video/ogg":             true, // some browsers report .ogg as video/ogg
+		"video/ogg":                true, // some browsers report .ogg as video/ogg
 	}
 	if !allowedAudio[mimeType] {
 		a.Log.Error("Unsupported audio MIME type", "mime_type", mimeType, "filename", fileHeader.Filename)
@@ -564,13 +566,13 @@ func transcodeToOpus(inputPath, outputPath string) error {
 	cmd := exec.Command("ffmpeg",
 		"-y",            // overwrite output
 		"-i", inputPath, // input file
-		"-ac", "1",      // mono
-		"-ar", "48000",  // 48kHz (Opus standard)
+		"-ac", "1", // mono
+		"-ar", "48000", // 48kHz (Opus standard)
 		"-c:a", "libopus",
 		"-b:a", "48k", // bitrate
 		"-application", "audio",
 		"-frame_duration", "20", // 20ms frames (matches RTP packetization)
-		"-vn",        // strip video/cover art
+		"-vn", // strip video/cover art
 		outputPath,
 	)
 
