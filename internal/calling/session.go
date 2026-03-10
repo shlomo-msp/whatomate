@@ -30,7 +30,8 @@ type CallSession struct {
 	Status          models.CallStatus
 	PeerConnection  *webrtc.PeerConnection
 	AudioTrack      *webrtc.TrackLocalStaticRTP
-	CurrentMenu     *IVRMenuNode
+	IVRGraph        *IVRFlowGraph
+	IVRCtx          *IVRContext
 	IVRFlow         *models.IVRFlow
 	IVRPlayer       *AudioPlayer // persists across goto_flow for RTP continuity
 	DTMFBuffer      chan byte
@@ -50,6 +51,9 @@ type CallSession struct {
 	HoldPlayer        *AudioPlayer
 	TransferCancel    context.CancelFunc
 	BridgeStarted     chan struct{} // closed when bridge takes over caller track
+	TransferDone      chan string   // outcome sent when transfer ends; nil = terminal
+	LastRTPSeq        uint16       // last RTP seq from bridge, for post-transfer player
+	LastRTPTimestamp   uint32       // last RTP timestamp from bridge
 
 	// Ringback (outgoing calls)
 	RingbackPlayer *AudioPlayer
@@ -66,23 +70,94 @@ type CallSession struct {
 	mu sync.Mutex
 }
 
-// IVRMenuNode represents a node in the IVR menu tree (parsed from JSONB)
-type IVRMenuNode struct {
-	Greeting            string                 `json:"greeting"`
-	GreetingText        string                 `json:"greeting_text,omitempty"`
-	Options             map[string]IVROption   `json:"options"`
-	TimeoutSeconds      int                    `json:"timeout_seconds"`
-	MaxRetries          int                    `json:"max_retries"`
-	InvalidInputMessage string                 `json:"invalid_input_message"`
-	Parent              *IVRMenuNode           `json:"-"`
+// IVRNodeType identifies the kind of applet in an IVR flow graph.
+type IVRNodeType string
+
+const (
+	IVRNodeGreeting     IVRNodeType = "greeting"
+	IVRNodeMenu         IVRNodeType = "menu"
+	IVRNodeGather       IVRNodeType = "gather"
+	IVRNodeHTTPCallback IVRNodeType = "http_callback"
+	IVRNodeTransfer     IVRNodeType = "transfer"
+	IVRNodeGotoFlow     IVRNodeType = "goto_flow"
+	IVRNodeTiming       IVRNodeType = "timing"
+	IVRNodeHangup       IVRNodeType = "hangup"
+)
+
+// IVRNodePosition stores the (x,y) position for the visual editor.
+type IVRNodePosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
-// IVROption represents a single option in an IVR menu
-type IVROption struct {
-	Label  string       `json:"label"`
-	Action string       `json:"action"` // transfer, submenu, repeat, parent, hangup, goto_flow
-	Target string       `json:"target,omitempty"`
-	Menu   *IVRMenuNode `json:"menu,omitempty"`
+// IVRNode represents a single node (applet) in an IVR flow graph.
+type IVRNode struct {
+	ID       string                 `json:"id"`
+	Type     IVRNodeType            `json:"type"`
+	Label    string                 `json:"label"`
+	Position IVRNodePosition        `json:"position"`
+	Config   map[string]interface{} `json:"config"`
+}
+
+// IVREdge connects two nodes in the flow graph.
+type IVREdge struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Condition string `json:"condition"` // default, digit:N, timeout, max_retries, http:2xx, http:non2xx, in_hours, out_of_hours
+}
+
+// IVRFlowGraph is the top-level structure stored in IVRFlow.Menu (version 2).
+type IVRFlowGraph struct {
+	Version   int       `json:"version"`
+	Nodes     []IVRNode `json:"nodes"`
+	Edges     []IVREdge `json:"edges"`
+	EntryNode string    `json:"entry_node"`
+
+	// Runtime lookup maps — populated by buildMaps()
+	nodeMap map[string]*IVRNode  // id → node
+	edgeMap map[string][]IVREdge // from-node-id → outgoing edges
+}
+
+// buildMaps populates the runtime lookup maps for fast traversal.
+func (g *IVRFlowGraph) buildMaps() {
+	g.nodeMap = make(map[string]*IVRNode, len(g.Nodes))
+	g.edgeMap = make(map[string][]IVREdge, len(g.Edges))
+	for i := range g.Nodes {
+		g.nodeMap[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	for _, e := range g.Edges {
+		g.edgeMap[e.From] = append(g.edgeMap[e.From], e)
+	}
+}
+
+// getNode returns the node with the given ID, or nil.
+func (g *IVRFlowGraph) getNode(id string) *IVRNode {
+	return g.nodeMap[id]
+}
+
+// resolveEdge finds the next node ID for a given outcome.
+// It tries an exact condition match first, then falls back to "default".
+func (g *IVRFlowGraph) resolveEdge(fromID, outcome string) string {
+	edges := g.edgeMap[fromID]
+	var defaultTarget string
+	for _, e := range edges {
+		if e.Condition == outcome {
+			return e.To
+		}
+		if e.Condition == "default" {
+			defaultTarget = e.To
+		}
+	}
+	return defaultTarget
+}
+
+// IVRContext holds runtime state during IVR flow execution.
+type IVRContext struct {
+	Variables   map[string]string
+	CallerPhone string
+	CallID      string
+	CurrentNode string
+	Path        []map[string]string
 }
 
 // Manager manages active call sessions
@@ -273,14 +348,25 @@ func (m *Manager) getOrgRingback(orgID uuid.UUID) string {
 func (m *Manager) cleanupSession(callID string) {
 	m.mu.Lock()
 	session, exists := m.sessions[callID]
-	if exists {
-		delete(m.sessions, callID)
-	}
-	m.mu.Unlock()
-
 	if !exists {
+		m.mu.Unlock()
 		return
 	}
+
+	// If a transfer is in the "waiting" state the agent's PC is being torn
+	// down intentionally. Don't destroy the whole session — the caller-side
+	// (or WA-side) PeerConnection must stay alive for hold music.
+	session.mu.Lock()
+	if session.TransferStatus == models.CallTransferStatusWaiting {
+		session.mu.Unlock()
+		m.mu.Unlock()
+		m.log.Info("Skipping cleanup — transfer in waiting state", "call_id", callID)
+		return
+	}
+	session.mu.Unlock()
+
+	delete(m.sessions, callID)
+	m.mu.Unlock()
 
 	// Snapshot state and resources under lock, then release before calling external methods
 	session.mu.Lock()
@@ -316,8 +402,15 @@ func (m *Manager) cleanupSession(callID string) {
 	session.DTMFBuffer = nil
 	recorder := session.Recorder
 	session.Recorder = nil
+	transferDone := session.TransferDone
+	session.TransferDone = nil
 
 	session.mu.Unlock()
+
+	// Close TransferDone to unblock any waiting IVR goroutine
+	if transferDone != nil {
+		close(transferDone)
+	}
 
 	// DB operations and broadcasts (outside lock)
 	if transferID != uuid.Nil && transferStatus == models.CallTransferStatusWaiting {
@@ -331,7 +424,7 @@ func (m *Manager) cleanupSession(callID string) {
 		m.db.Model(&models.CallLog{}).
 			Where("id = ?", callLogID).
 			Update("disconnected_by", models.DisconnectedByClient)
-		m.broadcastTransferEvent(orgID, websocket.TypeCallTransferAbandoned, map[string]any{
+		m.broadcastEvent(orgID, websocket.TypeCallTransferAbandoned, map[string]any{
 			"id":           transferID.String(),
 			"completed_at": now.Format(time.RFC3339),
 		})
@@ -385,6 +478,74 @@ func (m *Manager) cleanupSession(callID string) {
 	}
 
 	m.log.Info("Call session cleaned up", "call_id", callID)
+}
+
+// --- Shared helpers to reduce duplication across calling files ---
+
+// broadcastEvent broadcasts a call event via WebSocket to an organization.
+func (m *Manager) broadcastEvent(orgID uuid.UUID, eventType string, payload map[string]any) {
+	if m.wsHub == nil {
+		return
+	}
+	m.wsHub.BroadcastToOrg(orgID, websocket.WSMessage{
+		Type:    eventType,
+		Payload: payload,
+	})
+}
+
+// setupAudioBridge creates a recorder (if enabled), builds an AudioBridge,
+// and assigns both to the session under its lock.
+func (m *Manager) setupAudioBridge(session *CallSession) *AudioBridge {
+	recorder := m.newRecorderIfEnabled()
+	bridge := NewAudioBridge(recorder)
+	session.mu.Lock()
+	session.Bridge = bridge
+	session.Recorder = recorder
+	session.mu.Unlock()
+	return bridge
+}
+
+// safeClose closes a channel only if it hasn't already been closed.
+func safeClose(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+// terminateCall terminates an active call via the WhatsApp API.
+func (m *Manager) terminateCall(session *CallSession, waAccount *whatsapp.Account) {
+	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := m.whatsapp.TerminateCall(c, waAccount, session.ID); err != nil {
+		m.log.Error("Failed to terminate call via API", "error", err, "call_id", session.ID)
+	}
+}
+
+// terminateCallBySession looks up the WhatsApp account from the DB and
+// terminates the call. Used when only the session is available.
+func (m *Manager) terminateCallBySession(session *CallSession) {
+	var account models.WhatsAppAccount
+	if err := m.db.Where("organization_id = ? AND name = ?", session.OrganizationID, session.AccountName).
+		First(&account).Error; err != nil {
+		m.log.Error("Failed to look up account for call termination", "error", err, "call_id", session.ID)
+		return
+	}
+	waAccount := account.ToWAAccount()
+	if waAccount.AccessToken != "" {
+		m.terminateCall(session, waAccount)
+	}
+}
+
+// durationSince calculates seconds elapsed since a given time, returning 0 if
+// the pointer is nil.
+func durationSince(from *time.Time, now time.Time) int {
+	if from == nil {
+		return 0
+	}
+	return int(now.Sub(*from).Seconds())
 }
 
 // newRecorderIfEnabled creates a CallRecorder if recording is enabled, or returns nil.

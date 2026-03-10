@@ -23,6 +23,7 @@ type IVRFlowRequest struct {
 	Description     string       `json:"description"`
 	IsActive        bool         `json:"is_active"`
 	IsCallStart     bool         `json:"is_call_start"`
+	IsOutgoingEnd   bool         `json:"is_outgoing_end"`
 	Menu            models.JSONB `json:"menu"`
 	WelcomeAudioURL string       `json:"welcome_audio_url"`
 }
@@ -113,8 +114,18 @@ func (a *App) CreateIVRFlow(r *fastglue.Request) error {
 			Update("is_call_start", false)
 	}
 
-	// Generate TTS audio for greeting_text fields in the menu tree
+	// If marking this as outgoing end, unset others for the same account
+	if req.IsOutgoingEnd {
+		a.DB.Model(&models.IVRFlow{}).
+			Where("organization_id = ? AND whatsapp_account = ? AND is_outgoing_end = ?", orgID, req.WhatsAppAccount, true).
+			Update("is_outgoing_end", false)
+	}
+
+	// Validate and generate TTS for v2 flow graph
 	if req.Menu != nil {
+		if err := validateFlowGraph(req.Menu); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid flow graph: "+err.Error(), nil, "")
+		}
 		if a.TTS == nil {
 			if menuHasGreetingText(req.Menu) {
 				return r.SendErrorEnvelope(fasthttp.StatusBadRequest,
@@ -137,6 +148,7 @@ func (a *App) CreateIVRFlow(r *fastglue.Request) error {
 		Description:     req.Description,
 		IsActive:        req.IsActive,
 		IsCallStart:     req.IsCallStart,
+		IsOutgoingEnd:   req.IsOutgoingEnd,
 		Menu:            req.Menu,
 		WelcomeAudioURL: req.WelcomeAudioURL,
 	}
@@ -182,8 +194,19 @@ func (a *App) UpdateIVRFlow(r *fastglue.Request) error {
 			Update("is_call_start", false)
 	}
 
-	// Generate TTS audio for greeting_text fields in the menu tree
+	// If marking this as outgoing end, unset others for the same account
+	if req.IsOutgoingEnd && !flow.IsOutgoingEnd {
+		a.DB.Model(&models.IVRFlow{}).
+			Where("organization_id = ? AND whatsapp_account = ? AND is_outgoing_end = ? AND id != ?",
+				orgID, flow.WhatsAppAccount, true, flowID).
+			Update("is_outgoing_end", false)
+	}
+
+	// Validate and generate TTS for v2 flow graph
 	if req.Menu != nil {
+		if err := validateFlowGraph(req.Menu); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid flow graph: "+err.Error(), nil, "")
+		}
 		if a.TTS == nil {
 			if menuHasGreetingText(req.Menu) {
 				return r.SendErrorEnvelope(fasthttp.StatusBadRequest,
@@ -201,8 +224,9 @@ func (a *App) UpdateIVRFlow(r *fastglue.Request) error {
 	// Only update fields that were actually provided (non-zero) to support
 	// partial updates like toggling is_active without wiping the menu.
 	updates := map[string]any{
-		"is_active":    req.IsActive,
-		"is_call_start": req.IsCallStart,
+		"is_active":       req.IsActive,
+		"is_call_start":   req.IsCallStart,
+		"is_outgoing_end": req.IsOutgoingEnd,
 	}
 	if req.Name != "" {
 		updates["name"] = req.Name
@@ -559,79 +583,188 @@ func transcodeToOpus(inputPath, outputPath string) error {
 	return nil
 }
 
-// generateIVRAudio walks the IVR menu JSONB tree and generates TTS audio
-// for any node with a non-empty "greeting_text" field. The generated audio
-// filename is set as the node's "greeting" field.
+// generateIVRAudio iterates the flat v2 nodes array and generates TTS audio
+// for any node with a non-empty "greeting_text" in its config. The generated
+// audio filename is set as the node's "audio_file" config field.
 func (a *App) generateIVRAudio(menu models.JSONB) error {
-	return walkMenuTTS(menu, a.TTS.Generate)
-}
+	nodesRaw, ok := menu["nodes"]
+	if !ok {
+		return nil
+	}
 
-// walkMenuTTS recursively walks a menu JSONB node and calls generate for each
-// node with greeting_text set. It updates the greeting field in-place.
-func walkMenuTTS(menu models.JSONB, generate func(string) (string, error)) error {
-	greetingText, _ := menu["greeting_text"].(string)
-	if greetingText != "" {
-		filename, err := generate(greetingText)
+	// toSlice may produce a copy (via re-marshal), so we always write
+	// the potentially-modified slice back into menu["nodes"].
+	nodesSlice, ok := toSlice(nodesRaw)
+	if !ok {
+		return nil
+	}
+
+	for i, nodeRaw := range nodesSlice {
+		nodeMap, ok := nodeRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		configRaw, ok := nodeMap["config"]
+		if !ok {
+			continue
+		}
+		config, ok := configRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		greetingText, _ := config["greeting_text"].(string)
+		if greetingText == "" {
+			continue
+		}
+		filename, err := a.TTS.Generate(greetingText)
 		if err != nil {
 			return err
 		}
-		menu["greeting"] = filename
+		config["audio_file"] = filename
+		nodeMap["config"] = config
+		nodesSlice[i] = nodeMap
 	}
 
-	// Recurse into options → submenu
-	opts, _ := menu["options"].(map[string]interface{})
-	if opts == nil {
-		// Handle case where JSONB was deserialized via json.Unmarshal
-		if raw, ok := menu["options"]; ok {
-			if b, err := json.Marshal(raw); err == nil {
-				var parsed map[string]interface{}
-				if json.Unmarshal(b, &parsed) == nil {
-					opts = parsed
-				}
-			}
-		}
-	}
-
-	for _, optRaw := range opts {
-		opt, ok := optRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		subRaw, ok := opt["menu"]
-		if !ok {
-			continue
-		}
-		sub, ok := subRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if err := walkMenuTTS(sub, generate); err != nil {
-			return err
-		}
-	}
-
+	// Write the modified nodes back so changes reach the DB.
+	menu["nodes"] = nodesSlice
 	return nil
 }
 
-// menuHasGreetingText recursively checks if any node in the menu tree uses greeting_text.
+// menuHasGreetingText checks if any node in the v2 flow graph uses greeting_text.
 func menuHasGreetingText(menu models.JSONB) bool {
-	if text, _ := menu["greeting_text"].(string); text != "" {
-		return true
+	nodesRaw, ok := menu["nodes"]
+	if !ok {
+		return false
+	}
+	nodesSlice, ok := toSlice(nodesRaw)
+	if !ok {
+		return false
 	}
 
-	opts, _ := menu["options"].(map[string]interface{})
-	for _, optRaw := range opts {
-		opt, ok := optRaw.(map[string]interface{})
+	for _, nodeRaw := range nodesSlice {
+		nodeMap, ok := nodeRaw.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		sub, ok := opt["menu"].(map[string]interface{})
+		configRaw, ok := nodeMap["config"]
 		if !ok {
 			continue
 		}
-		if menuHasGreetingText(sub) {
+		config, ok := configRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if text, _ := config["greeting_text"].(string); text != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// toSlice converts an interface{} to []interface{}, handling JSON re-marshal if needed.
+func toSlice(v interface{}) ([]interface{}, bool) {
+	if s, ok := v.([]interface{}); ok {
+		return s, true
+	}
+	// Handle case where JSONB was deserialized differently
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var s []interface{}
+	if json.Unmarshal(b, &s) == nil {
+		return s, true
+	}
+	return nil, false
+}
+
+// validateFlowGraph validates a v2 IVR flow graph for structural correctness.
+func validateFlowGraph(menu models.JSONB) error {
+	versionRaw := menu["version"]
+	var version int
+	switch v := versionRaw.(type) {
+	case float64:
+		version = int(v)
+	case int:
+		version = v
+	}
+	if version != 2 {
+		return fmt.Errorf("unsupported flow version: %v (expected 2)", versionRaw)
+	}
+
+	nodesRaw, ok := menu["nodes"]
+	if !ok {
+		return fmt.Errorf("missing nodes array")
+	}
+	nodesSlice, ok := toSlice(nodesRaw)
+	if !ok {
+		return fmt.Errorf("nodes must be an array")
+	}
+
+	// Empty flow (no nodes yet) is valid
+	if len(nodesSlice) == 0 {
+		return nil
+	}
+
+	entryNode, _ := menu["entry_node"].(string)
+	if entryNode == "" {
+		return fmt.Errorf("missing entry_node (required when nodes exist)")
+	}
+
+	// Build node ID set and terminal node set
+	nodeIDs := make(map[string]bool, len(nodesSlice))
+	terminalNodes := make(map[string]bool)
+	terminalTypes := map[string]bool{"goto_flow": true, "hangup": true}
+
+	for _, nodeRaw := range nodesSlice {
+		nodeMap, ok := nodeRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := nodeMap["id"].(string)
+		if id == "" {
+			return fmt.Errorf("node missing id")
+		}
+		if nodeIDs[id] {
+			return fmt.Errorf("duplicate node id: %s", id)
+		}
+		nodeIDs[id] = true
+
+		nodeType, _ := nodeMap["type"].(string)
+		if terminalTypes[nodeType] {
+			terminalNodes[id] = true
+		}
+	}
+
+	if !nodeIDs[entryNode] {
+		return fmt.Errorf("entry_node %q does not reference a valid node", entryNode)
+	}
+
+	// Validate edges
+	edgesRaw := menu["edges"]
+	if edgesRaw != nil {
+		edgesSlice, ok := toSlice(edgesRaw)
+		if !ok {
+			return fmt.Errorf("edges must be an array")
+		}
+		for _, edgeRaw := range edgesSlice {
+			edgeMap, ok := edgeRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			from, _ := edgeMap["from"].(string)
+			to, _ := edgeMap["to"].(string)
+			if !nodeIDs[from] {
+				return fmt.Errorf("edge from %q references non-existent node", from)
+			}
+			if !nodeIDs[to] {
+				return fmt.Errorf("edge to %q references non-existent node", to)
+			}
+			if terminalNodes[from] {
+				return fmt.Errorf("terminal node %q must not have outgoing edges", from)
+			}
+		}
+	}
+
+	return nil
 }
