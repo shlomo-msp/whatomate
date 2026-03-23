@@ -62,8 +62,9 @@ async function handleAccept(id: string) {
     await store.acceptTransfer(id)
     toast.success(t('callTransfers.callConnected'))
   } catch (err: any) {
+    const serverMsg = err.response?.data?.message || err.message || ''
     toast.error(t('callTransfers.acceptFailed'), {
-      description: err.message || ''
+      description: serverMsg
     })
   } finally {
     acceptingId.value = null
