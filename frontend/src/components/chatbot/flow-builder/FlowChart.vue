@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, markRaw, nextTick } from 'vue'
-import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
+import { useVueFlow, MarkerType } from '@vue-flow/core'
 import type { Node, Edge, NodeMouseEvent, Connection } from '@vue-flow/core'
-import { Background } from '@vue-flow/background'
-import { Controls } from '@vue-flow/controls'
-import { MiniMap } from '@vue-flow/minimap'
 import { Button } from '@/components/ui/button'
 import { GitBranch, Play, Plus, MessageSquare, MousePointerClick, Globe, MessageCircle, UserPlus } from 'lucide-vue-next'
 import { stepsToNodesAndEdges, extractCanvasLayout } from '@/composables/useChatbotFlowConverter'
 import type { CanvasLayout } from '@/composables/useChatbotFlowConverter'
+import FlowCanvas from '@/components/shared/FlowCanvas.vue'
 import ChatbotTextNode from '@/components/chatbot/nodes/ChatbotTextNode.vue'
 import ChatbotButtonsNode from '@/components/chatbot/nodes/ChatbotButtonsNode.vue'
 import ChatbotApiNode from '@/components/chatbot/nodes/ChatbotApiNode.vue'
@@ -160,7 +158,6 @@ function onPaneClick() {
 
 function onPaletteClick(type: string) {
   if (selectedOnCanvas.value !== null) {
-    // Change the selected step's type
     emit('changeStepType', selectedOnCanvas.value, type)
   }
 }
@@ -245,31 +242,21 @@ function onEdgeRemove(edges: Edge[]) {
         @click="selectedOnCanvas !== null ? onPaletteClick(p.type) : emit('addStep')"
       >
         <div :class="['w-2 h-2 rounded-full', p.color]" />
-        <component :is="p.icon" class="w-3 h-3" />
+        <component :is="p.icon" class="w-3.5 h-3.5" />
         {{ p.label }}
       </Button>
     </div>
 
     <!-- Vue Flow Canvas -->
     <div class="flex-1">
-      <VueFlow
-        v-model:nodes="flowNodes"
-        v-model:edges="flowEdges"
+      <FlowCanvas
+        :nodes="flowNodes"
+        :edges="flowEdges"
         :node-types="nodeTypes"
-        :nodes-draggable="true"
-        :nodes-connectable="true"
-        :edges-updatable="true"
-        :zoom-on-scroll="true"
-        :zoom-on-pinch="true"
-        :pan-on-drag="true"
-        :pan-on-scroll="false"
-        :snap-to-grid="true"
-        :snap-grid="[20, 20]"
-        :min-zoom="0.2"
-        :max-zoom="2"
-        :delete-key-code="['Backspace', 'Delete']"
-        :default-edge-options="{ type: 'smoothstep', animated: true, markerEnd: MarkerType.ArrowClosed }"
+        edge-type="default"
         fit-view-on-init
+        @update:nodes="flowNodes = $event"
+        @update:edges="flowEdges = $event"
         @node-click="onNodeClick"
         @node-drag-stop="onNodeDragStop"
         @pane-click="onPaneClick"
@@ -278,11 +265,7 @@ function onEdgeRemove(edges: Edge[]) {
           const removals = changes.filter((c: any) => c.type === 'remove')
           if (removals.length) onEdgeRemove(removals.map((r: any) => flowEdges.find((e) => e.id === r.id)).filter(Boolean) as Edge[])
         }"
-      >
-        <Background :gap="20" />
-        <Controls position="bottom-left" />
-        <MiniMap />
-      </VueFlow>
+      />
 
       <!-- Empty state overlay -->
       <div
@@ -300,16 +283,3 @@ function onEdgeRemove(edges: Edge[]) {
     </div>
   </div>
 </template>
-
-<style>
-@import '@vue-flow/core/dist/style.css';
-@import '@vue-flow/core/dist/theme-default.css';
-@import '@vue-flow/controls/dist/style.css';
-@import '@vue-flow/minimap/dist/style.css';
-
-.selected-node {
-  outline: 3px solid hsl(var(--primary));
-  outline-offset: 2px;
-  border-radius: 0.5rem;
-}
-</style>

@@ -18,7 +18,7 @@ const summary = computed(() => {
 
 <template>
   <BaseNode :label="data?.label || 'API Fetch'" header-class="bg-orange-600" :has-input="!data?.isEntryNode">
-    <template #icon><Globe class="w-3 h-3" /></template>
-    <p class="truncate font-mono text-[10px]">{{ summary }}</p>
+    <template #icon><Globe class="w-4 h-4" /></template>
+    <p class="truncate font-mono text-[10px]" :title="data?.config?.api_config?.url || ''">{{ summary }}</p>
   </BaseNode>
 </template>

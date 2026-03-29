@@ -2,14 +2,8 @@
 import { ref, computed, onMounted, markRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { VueFlow, useVueFlow, MarkerType, type NodeMouseEvent, type Edge, type EdgeMouseEvent, type Connection } from '@vue-flow/core'
-import { Background } from '@vue-flow/background'
-import { Controls } from '@vue-flow/controls'
-import { MiniMap } from '@vue-flow/minimap'
-import '@vue-flow/core/dist/style.css'
-import '@vue-flow/core/dist/theme-default.css'
-import '@vue-flow/controls/dist/style.css'
-import '@vue-flow/minimap/dist/style.css'
+import { useVueFlow, MarkerType, type NodeMouseEvent, type Edge, type EdgeMouseEvent, type Connection } from '@vue-flow/core'
+import FlowCanvas from '@/components/shared/FlowCanvas.vue'
 import { useCallingStore } from '@/stores/calling'
 import { useTeamsStore } from '@/stores/teams'
 import { ivrFlowsService, type IVRNode, type IVREdge, type IVRFlowData, type IVRNodeType } from '@/services/api'
@@ -455,23 +449,14 @@ onMounted(() => {
             </div>
           </template>
         </ErrorState>
-        <VueFlow
+        <FlowCanvas
           :node-types="nodeTypes"
-          :default-viewport="{ x: 0, y: 0, zoom: 1 }"
-          :snap-to-grid="true"
-          :snap-grid="[20, 20]"
-          :edges-updatable="true"
-          :delete-key-code="['Backspace', 'Delete']"
-          class="h-full"
+          edge-type="default"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
           @edge-update="onEdgeUpdate"
           @edge-click="onEdgeClick"
-        >
-          <Background :gap="20" />
-          <Controls />
-          <MiniMap />
-        </VueFlow>
+        />
       </div>
 
       <!-- Properties Panel -->

@@ -380,6 +380,17 @@ function getStepIcon(messageType: string) {
   return type?.icon || MessageSquare
 }
 
+function getStepColor(messageType: string): string {
+  const colors: Record<string, string> = {
+    text: 'border-l-blue-500',
+    buttons: 'border-l-purple-500',
+    api_fetch: 'border-l-orange-500',
+    whatsapp_flow: 'border-l-green-500',
+    transfer: 'border-l-amber-500',
+  }
+  return colors[messageType] || 'border-l-slate-400'
+}
+
 function getStepLabel(messageType: string) {
   const type = messageTypes.value.find(t => t.value === messageType)
   return type?.label || t('flowBuilder.messageTypeText')
@@ -1026,17 +1037,19 @@ function confirmCancel() {
               v-model="formData.steps"
               item-key="step_name"
               handle=".drag-handle"
-              class="space-y-1"
+              class="space-y-2"
               @end="updateStepOrders"
             >
               <template #item="{ element: step, index }">
-                <div
-                  :class="[
-                    'group flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors',
-                    selectedStepIndex === index ? 'bg-primary/10 border border-primary/20' : 'hover:bg-muted'
-                  ]"
-                  @click="selectStep(index)"
-                >
+                <div>
+                  <div
+                    :class="[
+                      'group flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors border-l-[3px] shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]',
+                      getStepColor(step.message_type),
+                      selectedStepIndex === index ? 'bg-primary/10' : 'hover:bg-muted'
+                    ]"
+                    @click="selectStep(index)"
+                  >
                   <GripVertical class="h-4 w-4 text-muted-foreground cursor-grab drag-handle flex-shrink-0" />
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
@@ -1056,6 +1069,7 @@ function confirmCancel() {
                   >
                     <Trash2 class="h-4 w-4" />
                   </Button>
+                  </div>
                 </div>
               </template>
             </draggable>
