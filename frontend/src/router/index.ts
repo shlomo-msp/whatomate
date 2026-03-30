@@ -195,6 +195,12 @@ const router = createRouter({
           meta: { permission: 'teams' }
         },
         {
+          path: 'settings/teams/:id',
+          name: 'team-detail',
+          component: () => import('@/views/settings/TeamDetailView.vue'),
+          meta: { permission: 'teams' }
+        },
+        {
           path: 'settings/api-keys',
           name: 'api-keys',
           component: () => import('@/views/settings/APIKeysView.vue'),
