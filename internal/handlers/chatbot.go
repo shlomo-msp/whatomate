@@ -1054,16 +1054,51 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 	// Build extra changes for steps if they were updated
 	var extraChanges []map[string]any
 	if len(req.Steps) > 0 {
-		// Summarize step names for the audit log
-		stepNames := make([]string, len(req.Steps))
-		for i, s := range req.Steps {
-			stepNames[i] = s.StepName
+		// Build old step lookup by name
+		oldStepMap := make(map[string]models.ChatbotFlowStep)
+		for _, s := range oldFlow.Steps {
+			oldStepMap[s.StepName] = s
 		}
-		extraChanges = append(extraChanges, map[string]any{
-			"field":     "steps",
-			"old_value": fmt.Sprintf("%d steps", len(oldFlow.Steps)),
-			"new_value": fmt.Sprintf("%d steps: %s", len(req.Steps), strings.Join(stepNames, ", ")),
-		})
+
+		// Detect added, removed, and modified steps
+		var added, modified []string
+		newStepNames := make(map[string]bool)
+		for _, s := range req.Steps {
+			newStepNames[s.StepName] = true
+			old, exists := oldStepMap[s.StepName]
+			if !exists {
+				added = append(added, s.StepName)
+			} else if old.Message != s.Message || string(old.MessageType) != string(s.MessageType) || old.NextStep != s.NextStep {
+				modified = append(modified, s.StepName)
+			}
+		}
+		var removed []string
+		for _, s := range oldFlow.Steps {
+			if !newStepNames[s.StepName] {
+				removed = append(removed, s.StepName)
+			}
+		}
+
+		if len(added) > 0 {
+			extraChanges = append(extraChanges, map[string]any{
+				"field": "steps_added", "old_value": nil, "new_value": strings.Join(added, ", "),
+			})
+		}
+		if len(removed) > 0 {
+			extraChanges = append(extraChanges, map[string]any{
+				"field": "steps_removed", "old_value": strings.Join(removed, ", "), "new_value": nil,
+			})
+		}
+		if len(modified) > 0 {
+			extraChanges = append(extraChanges, map[string]any{
+				"field": "steps_modified", "old_value": nil, "new_value": strings.Join(modified, ", "),
+			})
+		}
+		if len(oldFlow.Steps) != len(req.Steps) {
+			extraChanges = append(extraChanges, map[string]any{
+				"field": "step_count", "old_value": fmt.Sprintf("%d", len(oldFlow.Steps)), "new_value": fmt.Sprintf("%d", len(req.Steps)),
+			})
+		}
 	}
 
 	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
