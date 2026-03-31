@@ -80,7 +80,7 @@ const error = ref<string | null>(null)
 const searchQuery = ref('')
 const {
   isSubmitting, isDialogOpen, editingItem: editingContext, deleteDialogOpen, itemToDelete: contextToDelete,
-  formData, openCreateDialog, openEditDialog: baseOpenEditDialog, openDeleteDialog, closeDialog, closeDeleteDialog,
+  formData, openDeleteDialog, closeDialog, closeDeleteDialog,
 } = useCrudState<AIContext, AIContextFormData>(defaultFormData)
 
 // Pagination state
@@ -145,21 +145,6 @@ function handlePageChange(page: number) {
   fetchContexts()
 }
 
-function openEditDialog(context: AIContext) {
-  const apiConfig = context.api_config || {} as ApiConfig
-  baseOpenEditDialog(context, (c) => ({
-    name: c.name,
-    context_type: c.context_type || 'static',
-    trigger_keywords: (c.trigger_keywords || []).join(', '),
-    static_content: c.static_content || '',
-    api_url: apiConfig.url || '',
-    api_method: apiConfig.method || 'GET',
-    api_headers: apiConfig.headers ? JSON.stringify(apiConfig.headers, null, 2) : '',
-    api_response_path: apiConfig.response_path || '',
-    priority: c.priority || 10,
-    enabled: c.enabled
-  }))
-}
 
 async function saveContext() {
   if (!formData.value.name.trim()) {
@@ -255,16 +240,18 @@ async function toggleContext(context: AIContext) {
       :breadcrumbs="[{ label: $t('aiContexts.backToChatbot'), href: '/chatbot' }, { label: $t('nav.aiContexts') }]"
     >
       <template #actions>
-        <Button variant="outline" size="sm" @click="openCreateDialog">
-          <Plus class="h-4 w-4 mr-2" />
-          {{ $t('aiContexts.addContext') }}
-        </Button>
+        <RouterLink to="/chatbot/ai/new">
+          <Button variant="outline" size="sm">
+            <Plus class="h-4 w-4 mr-2" />
+            {{ $t('aiContexts.addContext') }}
+          </Button>
+        </RouterLink>
       </template>
     </PageHeader>
 
     <ScrollArea class="flex-1">
       <div class="p-6">
-        <div class="max-w-6xl mx-auto">
+        <div>
           <Card>
             <CardHeader>
               <div class="flex items-center justify-between flex-wrap gap-4">
@@ -301,7 +288,7 @@ async function toggleContext(context: AIContext) {
                 @page-change="handlePageChange"
               >
                 <template #cell-name="{ item: context }">
-                  <span class="font-medium">{{ context.name }}</span>
+                  <RouterLink :to="`/chatbot/ai/${context.id}`" class="font-medium text-inherit no-underline hover:opacity-80">{{ context.name }}</RouterLink>
                 </template>
                 <template #cell-context_type="{ item: context }">
                   <Badge
@@ -335,15 +322,17 @@ async function toggleContext(context: AIContext) {
                 </template>
                 <template #cell-actions="{ item: context }">
                   <div class="flex items-center justify-end gap-1">
-                    <IconButton :icon="Pencil" :label="$t('aiContexts.editContextLabel')" class="h-8 w-8" @click="openEditDialog(context)" />
+                    <RouterLink :to="`/chatbot/ai/${context.id}`"><IconButton :icon="Pencil" :label="$t('aiContexts.editContextLabel')" class="h-8 w-8" /></RouterLink>
                     <IconButton :icon="Trash2" :label="$t('aiContexts.deleteContextLabel')" class="h-8 w-8 text-destructive" @click="openDeleteDialog(context)" />
                   </div>
                 </template>
                 <template #empty-action>
-                  <Button v-if="!searchQuery" variant="outline" size="sm" @click="openCreateDialog">
-                    <Plus class="h-4 w-4 mr-2" />
-                    {{ $t('aiContexts.addContext') }}
-                  </Button>
+                  <RouterLink v-if="!searchQuery" to="/chatbot/ai/new">
+                    <Button variant="outline" size="sm">
+                      <Plus class="h-4 w-4 mr-2" />
+                      {{ $t('aiContexts.addContext') }}
+                    </Button>
+                  </RouterLink>
                 </template>
               </DataTable>
             </CardContent>

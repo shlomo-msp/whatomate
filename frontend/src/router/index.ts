@@ -99,6 +99,12 @@ const router = createRouter({
           meta: { permission: 'chatbot.keywords' }
         },
         {
+          path: 'chatbot/keywords/:id',
+          name: 'keyword-detail',
+          component: () => import('@/views/chatbot/KeywordDetailView.vue'),
+          meta: { permission: 'chatbot.keywords' }
+        },
+        {
           path: 'chatbot/flows',
           name: 'chatbot-flows',
           component: () => import('@/views/chatbot/ChatbotFlowsView.vue'),
@@ -120,6 +126,12 @@ const router = createRouter({
           path: 'chatbot/ai',
           name: 'chatbot-ai',
           component: () => import('@/views/chatbot/AIContextsView.vue'),
+          meta: { permission: 'chatbot.ai' }
+        },
+        {
+          path: 'chatbot/ai/:id',
+          name: 'ai-context-detail',
+          component: () => import('@/views/chatbot/AIContextDetailView.vue'),
           meta: { permission: 'chatbot.ai' }
         },
         {

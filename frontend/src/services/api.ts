@@ -327,6 +327,7 @@ export const chatbotService = {
   // Keywords
   listKeywords: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{ rules: any[]; total?: number }>('/chatbot/keywords', { params }),
+  getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
   createKeyword: (data: any) => api.post('/chatbot/keywords', data),
   updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
   deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
@@ -342,6 +343,7 @@ export const chatbotService = {
   // AI Contexts
   listAIContexts: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{ contexts: any[]; total?: number }>('/chatbot/ai-contexts', { params }),
+  getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
   createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
   updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
   deleteAIContext: (id: string) => api.delete(`/chatbot/ai-contexts/${id}`),

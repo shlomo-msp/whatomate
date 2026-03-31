@@ -72,7 +72,7 @@ const error = ref<string | null>(null)
 const searchQuery = ref('')
 const {
   isSubmitting, isDialogOpen, editingItem: editingRule, deleteDialogOpen, itemToDelete: ruleToDelete,
-  formData, openCreateDialog: baseOpenCreateDialog, openEditDialog: baseOpenEditDialog, openDeleteDialog, closeDialog, closeDeleteDialog,
+  formData, openDeleteDialog, closeDialog, closeDeleteDialog,
 } = useCrudState<KeywordRule, KeywordFormData>(defaultFormData)
 
 // Pagination state
@@ -144,23 +144,6 @@ watch(searchQuery, () => {
 function handlePageChange(page: number) {
   currentPage.value = page
   fetchRules()
-}
-
-function openCreateDialog() {
-  baseOpenCreateDialog()
-  formData.value.buttons = [] // fresh array to avoid shared reference
-}
-
-function openEditDialog(rule: KeywordRule) {
-  baseOpenEditDialog(rule, (r) => ({
-    keywords: r.keywords.join(', '),
-    match_type: r.match_type,
-    response_type: r.response_type,
-    response_content: r.response_content?.body || '',
-    buttons: [...(r.response_content?.buttons || [])],
-    priority: r.priority,
-    enabled: r.enabled
-  }))
 }
 
 async function saveRule() {
@@ -253,16 +236,18 @@ const emptyDescription = computed(() => {
       :breadcrumbs="[{ label: $t('keywords.backToChatbot'), href: '/chatbot' }, { label: $t('nav.keywords') }]"
     >
       <template #actions>
-        <Button variant="outline" size="sm" @click="openCreateDialog">
-          <Plus class="h-4 w-4 mr-2" />
-          {{ $t('keywords.addRule') }}
-        </Button>
+        <RouterLink to="/chatbot/keywords/new">
+          <Button variant="outline" size="sm">
+            <Plus class="h-4 w-4 mr-2" />
+            {{ $t('keywords.addRule') }}
+          </Button>
+        </RouterLink>
       </template>
     </PageHeader>
 
     <ScrollArea class="flex-1">
       <div class="p-6">
-        <div class="max-w-6xl mx-auto">
+        <div>
           <Card>
             <CardHeader>
               <div class="flex items-center justify-between">
@@ -299,14 +284,14 @@ const emptyDescription = computed(() => {
                 @page-change="handlePageChange"
               >
                 <template #cell-keywords="{ item: rule }">
-                  <div class="flex flex-wrap gap-1">
+                  <RouterLink :to="`/chatbot/keywords/${rule.id}`" class="flex flex-wrap gap-1 text-inherit no-underline hover:opacity-80">
                     <Badge v-for="keyword in rule.keywords.slice(0, 3)" :key="keyword" variant="outline" class="text-xs">
                       {{ keyword }}
                     </Badge>
                     <Badge v-if="rule.keywords.length > 3" variant="outline" class="text-xs">
                       +{{ rule.keywords.length - 3 }}
                     </Badge>
-                  </div>
+                  </RouterLink>
                 </template>
                 <template #cell-match_type="{ item: rule }">
                   <Badge class="text-xs capitalize bg-blue-500/20 text-blue-400 border-transparent">{{ rule.match_type }}</Badge>
@@ -332,15 +317,17 @@ const emptyDescription = computed(() => {
                 </template>
                 <template #cell-actions="{ item: rule }">
                   <div class="flex items-center justify-end gap-1">
-                    <IconButton :icon="Pencil" :label="$t('keywords.editRuleLabel')" class="h-8 w-8" @click="openEditDialog(rule)" />
+                    <RouterLink :to="`/chatbot/keywords/${rule.id}`"><IconButton :icon="Pencil" :label="$t('keywords.editRuleLabel')" class="h-8 w-8" /></RouterLink>
                     <IconButton :icon="Trash2" :label="$t('keywords.deleteRuleLabel')" class="h-8 w-8 text-destructive" @click="openDeleteDialog(rule)" />
                   </div>
                 </template>
                 <template #empty-action>
-                  <Button v-if="!searchQuery" variant="outline" size="sm" @click="openCreateDialog">
-                    <Plus class="h-4 w-4 mr-2" />
-                    {{ $t('keywords.addRule') }}
-                  </Button>
+                  <RouterLink v-if="!searchQuery" to="/chatbot/keywords/new">
+                    <Button variant="outline" size="sm">
+                      <Plus class="h-4 w-4 mr-2" />
+                      {{ $t('keywords.addRule') }}
+                    </Button>
+                  </RouterLink>
                 </template>
               </DataTable>
             </CardContent>

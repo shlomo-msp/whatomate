@@ -22,6 +22,7 @@ const authStore = useAuthStore()
 interface WhatsAppAccount {
   id: string
   name: string
+  app_id: string
   phone_id: string
   business_id: string
   api_version: string
