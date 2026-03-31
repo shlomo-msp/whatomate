@@ -49,7 +49,9 @@ const sortDirection = ref<'asc' | 'desc'>('asc')
 
 const columns = computed<Column<WhatsAppAccount>[]>(() => [
   { key: 'account', label: t('accounts.account', 'Account'), width: 'w-[250px]', sortable: true, sortKey: 'name' },
+  { key: 'app_id', label: t('accounts.appId', 'App ID') },
   { key: 'phone_id', label: t('accounts.phoneNumberId', 'Phone ID'), sortable: true },
+  { key: 'api_version', label: t('accounts.apiVersion', 'Version') },
   { key: 'defaults', label: t('accounts.defaults', 'Defaults') },
   { key: 'status', label: t('accounts.status', 'Status'), sortable: true, sortKey: 'status' },
   { key: 'created', label: t('common.created', 'Created'), sortable: true, sortKey: 'created_at' },
@@ -125,7 +127,7 @@ async function confirmDelete() {
 
     <ScrollArea v-else class="flex-1">
       <div class="p-6">
-        <div class="max-w-5xl mx-auto">
+        <div>
           <Card>
             <CardHeader>
               <div>
@@ -158,8 +160,15 @@ async function confirmDelete() {
                     <p class="font-medium truncate">{{ account.name }}</p>
                   </RouterLink>
                 </template>
+                <template #cell-app_id="{ item: account }">
+                  <code v-if="account.app_id" class="text-xs bg-muted px-1.5 py-0.5 rounded">{{ account.app_id }}</code>
+                  <span v-else class="text-muted-foreground">—</span>
+                </template>
                 <template #cell-phone_id="{ item: account }">
                   <code class="text-xs bg-muted px-1.5 py-0.5 rounded">{{ account.phone_id }}</code>
+                </template>
+                <template #cell-api_version="{ item: account }">
+                  <span class="text-sm">{{ account.api_version }}</span>
                 </template>
                 <template #cell-defaults="{ item: account }">
                   <div class="flex items-center gap-1.5 flex-wrap">
