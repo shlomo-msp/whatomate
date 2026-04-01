@@ -304,3 +304,97 @@ test.describe('Campaign UI Elements', () => {
     // Empty state shows when no campaigns exist
   })
 })
+
+test.describe('Campaign Detail Page CRUD', () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page)
+  })
+
+  test('should show form fields on create page', async ({ page }) => {
+    await page.goto('/campaigns/new')
+    await page.waitForLoadState('networkidle')
+
+    // Name input
+    await expect(page.locator('input').first()).toBeVisible()
+    // Account and Template selects
+    const selects = page.locator('button[role="combobox"]')
+    expect(await selects.count()).toBeGreaterThanOrEqual(1)
+  })
+
+  test('should load detail page from list', async ({ page }) => {
+    await page.goto('/campaigns')
+    await page.waitForLoadState('networkidle')
+
+    const firstLink = page.locator('tbody a').first()
+    if (await firstLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const href = await firstLink.getAttribute('href')
+      if (href && !href.includes('/new')) {
+        await page.goto(href)
+        await page.waitForLoadState('networkidle')
+        expect(page.url()).toMatch(/\/campaigns\/[a-f0-9-]+/)
+      }
+    }
+  })
+
+  test('should show stats on existing campaign', async ({ page }) => {
+    await page.goto('/campaigns')
+    await page.waitForLoadState('networkidle')
+
+    const firstLink = page.locator('tbody a').first()
+    if (await firstLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const href = await firstLink.getAttribute('href')
+      if (href && !href.includes('/new')) {
+        await page.goto(href)
+        await page.waitForLoadState('networkidle')
+        await expect(page.getByText('Statistics')).toBeVisible({ timeout: 10000 })
+      }
+    }
+  })
+
+  test('should show recipients section on existing campaign', async ({ page }) => {
+    await page.goto('/campaigns')
+    await page.waitForLoadState('networkidle')
+
+    const firstLink = page.locator('tbody a').first()
+    if (await firstLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const href = await firstLink.getAttribute('href')
+      if (href && !href.includes('/new')) {
+        await page.goto(href)
+        await page.waitForLoadState('networkidle')
+        await expect(page.getByText('Recipients')).toBeVisible({ timeout: 10000 })
+      }
+    }
+  })
+
+  test('should show metadata on existing campaign', async ({ page }) => {
+    await page.goto('/campaigns')
+    await page.waitForLoadState('networkidle')
+
+    const firstLink = page.locator('tbody a').first()
+    if (await firstLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const href = await firstLink.getAttribute('href')
+      if (href && !href.includes('/new')) {
+        await page.goto(href)
+        await page.waitForLoadState('networkidle')
+        await page.waitForTimeout(2000)
+        await expect(page.getByText('Metadata')).toBeVisible({ timeout: 15000 })
+      }
+    }
+  })
+
+  test('should show activity log on existing campaign', async ({ page }) => {
+    await page.goto('/campaigns')
+    await page.waitForLoadState('networkidle')
+
+    const firstLink = page.locator('tbody a').first()
+    if (await firstLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const href = await firstLink.getAttribute('href')
+      if (href && !href.includes('/new')) {
+        await page.goto(href)
+        await page.waitForLoadState('networkidle')
+        await page.waitForTimeout(2000)
+        await expect(page.getByText('Activity Log')).toBeVisible({ timeout: 15000 })
+      }
+    }
+  })
+})
