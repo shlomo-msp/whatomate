@@ -163,7 +163,7 @@ const isPausing = ref(false)
 
 const canStart = computed(() => {
   const s = campaign.value?.status
-  return s === 'draft' || s === 'scheduled' || s === 'paused'
+  return (s === 'draft' || s === 'scheduled' || s === 'paused') && (campaign.value?.total_recipients || 0) > 0
 })
 const canPause = computed(() => {
   const s = campaign.value?.status
