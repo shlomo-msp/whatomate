@@ -154,8 +154,7 @@ function getStatusClass(status: string): string {
 async function loadAccounts() {
   try {
     const response = await api.get('/accounts')
-    const data = (response.data as any).data || response.data
-    accounts.value = data?.accounts || data || []
+    accounts.value = (response.data as any).data?.accounts || []
   } catch {
     accounts.value = []
   }
@@ -170,8 +169,7 @@ async function loadTemplates() {
     const response = await api.get('/templates', {
       params: { whatsapp_account: form.value.whatsapp_account },
     })
-    const data = (response.data as any).data || response.data
-    templates.value = data?.templates || data || []
+    templates.value = (response.data as any).data?.templates || []
   } catch {
     templates.value = []
   }
