@@ -31,7 +31,14 @@ function formatFieldName(field: string): string {
 function formatValue(val: any): string {
   if (val === null || val === undefined || val === '') return '—'
   if (typeof val === 'boolean') return val ? 'Yes' : 'No'
-  if (Array.isArray(val)) return val.join(', ') || '—'
+  if (Array.isArray(val)) {
+    if (val.length === 0) return '—'
+    // Format array of objects (e.g. buttons) as readable text
+    if (typeof val[0] === 'object' && val[0] !== null) {
+      return val.map(item => item.text || item.name || item.title || JSON.stringify(item)).join(', ')
+    }
+    return val.join(', ') || '—'
+  }
   if (typeof val === 'object') {
     // For simple objects with a "body" key (like response_content), show the body
     if (val.body) return String(val.body)

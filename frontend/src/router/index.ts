@@ -71,6 +71,12 @@ const router = createRouter({
           meta: { permission: 'templates' }
         },
         {
+          path: 'templates/:id',
+          name: 'template-detail',
+          component: () => import('@/views/settings/TemplateDetailView.vue'),
+          meta: { permission: 'templates' }
+        },
+        {
           path: 'flows',
           name: 'flows',
           component: () => import('@/views/settings/FlowsView.vue'),

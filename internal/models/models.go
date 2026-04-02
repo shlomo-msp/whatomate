@@ -416,9 +416,13 @@ type Template struct {
 	FooterContent   string     `gorm:"type:text" json:"footer_content"`
 	Buttons         JSONBArray  `gorm:"type:jsonb;default:'[]'" json:"buttons"`
 	SampleValues    JSONBArray  `gorm:"type:jsonb;default:'[]'" json:"sample_values"`
+	CreatedByID     *uuid.UUID  `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID     *uuid.UUID  `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	CreatedBy    *User         `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	UpdatedBy    *User         `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 }
 
 func (Template) TableName() string {
