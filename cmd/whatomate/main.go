@@ -700,6 +700,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 	// Audit Logs
 	g.GET("/api/audit-logs", app.ListAuditLogs)
+	g.GET("/api/audit-logs/{id}", app.GetAuditLog)
 
 	// Canned Responses
 	g.GET("/api/canned-responses", app.ListCannedResponses)

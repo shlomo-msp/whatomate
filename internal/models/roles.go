@@ -75,6 +75,7 @@ const (
 	ResourceIVRFlows        = "ivr_flows"
 	ResourceCallTransfers   = "call_transfers"
 	ResourceOutgoingCalls   = "outgoing_calls"
+	ResourceAuditLogs       = "audit_logs"
 )
 
 // PermissionAction constants for available actions
@@ -222,6 +223,9 @@ func DefaultPermissions() []Permission {
 		// Outgoing Calls
 		{Resource: ResourceOutgoingCalls, Action: ActionRead, Description: "View outgoing call status"},
 		{Resource: ResourceOutgoingCalls, Action: ActionWrite, Description: "Initiate outgoing calls"},
+
+		// Audit Logs
+		{Resource: ResourceAuditLogs, Action: ActionRead, Description: "View audit logs"},
 	}
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { auditLogsService, type AuditLogEntry } from '@/services/api'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime, formatLabel } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,10 +22,6 @@ const actionConfig: Record<string, { icon: any; color: string; label: string }> 
   created: { icon: Plus, color: 'bg-green-500', label: 'Created' },
   updated: { icon: Pencil, color: 'bg-blue-500', label: 'Updated' },
   deleted: { icon: Trash2, color: 'bg-red-500', label: 'Deleted' },
-}
-
-function formatFieldName(field: string): string {
-  return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function formatValue(val: any): string {
@@ -129,7 +125,7 @@ onMounted(() => loadLogs())
                 :key="idx"
                 class="text-xs rounded-md bg-muted/50 px-2.5 py-1.5 overflow-hidden"
               >
-                <span class="font-medium text-foreground">{{ formatFieldName(change.field) }}:</span>
+                <span class="font-medium text-foreground">{{ formatLabel(change.field) }}:</span>
                 <div class="mt-0.5 text-muted-foreground break-words">
                   <span>{{ formatValue(change.old_value) }}</span>
                   <span class="mx-1">→</span>

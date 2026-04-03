@@ -761,6 +761,7 @@ export interface AuditLogEntry {
   id: string
   resource_type: string
   resource_id: string
+  user_id: string
   user_name: string
   action: 'created' | 'updated' | 'deleted'
   changes: AuditLogChange[]
@@ -768,9 +769,15 @@ export interface AuditLogEntry {
 }
 
 export const auditLogsService = {
-  list: (params: {
-    resource_type: string
-    resource_id: string
+  get: (id: string) =>
+    api.get<AuditLogEntry>(`/audit-logs/${id}`),
+  list: (params?: {
+    resource_type?: string
+    resource_id?: string
+    user_id?: string
+    action?: string
+    from?: string
+    to?: string
     page?: number
     limit?: number
   }) =>
