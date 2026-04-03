@@ -1084,7 +1084,11 @@ export const callLogsService = {
     api.get<{ call_logs: CallLog[]; total: number }>('/call-logs', { params }),
   get: (id: string) => api.get<CallLog>(`/call-logs/${id}`),
   getRecordingURL: (id: string) =>
-    api.get<{ url: string; duration: number }>(`/call-logs/${id}/recording`)
+    api.get<{ url: string; duration: number }>(`/call-logs/${id}/recording`),
+  hold: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/hold`),
+  resume: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/resume`),
 }
 
 export const callTransfersService = {

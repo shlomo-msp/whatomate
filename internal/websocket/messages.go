@@ -50,6 +50,10 @@ const (
 	TypeCallTransferNoAnswer    = "call_transfer_no_answer"
 	TypeCallTransferReassigned = "call_transfer_reassigned"
 
+	// Call hold types
+	TypeCallHold    = "call_hold"
+	TypeCallResumed = "call_resumed"
+
 	// Outgoing call types
 	TypeOutgoingCallInitiated = "outgoing_call_initiated"
 	TypeOutgoingCallRinging   = "outgoing_call_ringing"
