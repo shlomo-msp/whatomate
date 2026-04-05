@@ -1169,6 +1169,13 @@ function getCTAUrlData(message: Message): CTAUrlData | null {
   }
 }
 
+function getFlowButtonText(message: Message): string | null {
+  if (message.message_type !== 'flow' || !message.interactive_data) {
+    return null
+  }
+  return (message.interactive_data as any).button_text || null
+}
+
 function isMediaMessage(message: Message): boolean {
   return ['image', 'video', 'audio', 'document'].includes(message.message_type)
 }
@@ -1950,6 +1957,15 @@ async function sendMediaMessage() {
                     {{ getCTAUrlData(message)?.button_text }}
                   </div>
                 </a>
+                <!-- Flow button - WhatsApp style -->
+                <div
+                  v-if="getFlowButtonText(message)"
+                  class="interactive-buttons mt-2 -mx-2 -mb-1.5 border-t"
+                >
+                  <div class="py-2 text-sm text-center font-medium">
+                    {{ getFlowButtonText(message) }}
+                  </div>
+                </div>
                 <!-- Time for messages without text content -->
                 <span v-if="!getMessageContent(message) && !(isMediaMessage(message) && !message.media_url)" class="chat-bubble-time block clear-both">
                   <span>{{ formatMessageTime(message.created_at) }}</span>

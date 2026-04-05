@@ -279,6 +279,12 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 
 	case models.MessageTypeFlow:
 		msg.Content = req.BodyText
+		msg.InteractiveData = models.JSONB{
+			"type":        "flow",
+			"body":        req.BodyText,
+			"button_text": req.FlowCTA,
+			"flow_id":     req.FlowID,
+		}
 
 	case models.MessageTypeTemplate:
 		if req.Template != nil {
