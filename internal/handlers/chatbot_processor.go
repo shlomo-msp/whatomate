@@ -2253,7 +2253,7 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 	if len(preview) > 100 {
 		preview = preview[:97] + "..."
 	}
-	if msgType != "text" && msgType != "button_reply" {
+	if msgType != "text" && msgType != "button_reply" && msgType != "nfm_reply" {
 		preview = "[" + msgType + "]"
 	}
 

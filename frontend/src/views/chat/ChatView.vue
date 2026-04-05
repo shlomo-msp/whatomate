@@ -1039,8 +1039,8 @@ function getMessageContent(message: Message): string {
   if (message.message_type === 'text') {
     return message.content?.body || ''
   }
-  if (message.message_type === 'button_reply') {
-    // Button reply stores the selected button title in content
+  if (message.message_type === 'button_reply' || message.message_type === 'nfm_reply') {
+    // Button/flow reply stores the response text in content
     if (typeof message.content === 'string') {
       return message.content
     }
