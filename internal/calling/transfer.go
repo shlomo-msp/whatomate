@@ -468,10 +468,11 @@ func (m *Manager) completeTransferConnection(session *CallSession, transferID, a
 	session.AgentRemoteTrack = agentRemoteTrack
 	session.mu.Unlock()
 
-	// Stop hold music
+	// Stop hold music and clear the player so the agent can hold again later
 	session.mu.Lock()
 	if session.HoldPlayer != nil {
 		session.HoldPlayer.Stop()
+		session.HoldPlayer = nil
 	}
 	session.mu.Unlock()
 

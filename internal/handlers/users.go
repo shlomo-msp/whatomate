@@ -136,18 +136,10 @@ func (a *App) ListUsers(r *fastglue.Request) error {
 		}
 	}
 
-	// Fetch actual home org IDs (separate query avoids JOIN column conflict)
+	// Build home org map from already-fetched users (no extra query needed)
 	homeOrgMap := make(map[uuid.UUID]uuid.UUID, len(users))
-	if len(userIDs) > 0 {
-		type idOrg struct {
-			ID             uuid.UUID
-			OrganizationID uuid.UUID
-		}
-		var homeOrgs []idOrg
-		a.DB.Model(&models.User{}).Select("id, organization_id").Where("id IN ?", userIDs).Find(&homeOrgs)
-		for _, ho := range homeOrgs {
-			homeOrgMap[ho.ID] = ho.OrganizationID
-		}
+	for _, u := range users {
+		homeOrgMap[u.ID] = u.OrganizationID
 	}
 
 	// Convert to response format, using org-specific role

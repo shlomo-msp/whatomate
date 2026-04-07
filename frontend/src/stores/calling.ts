@@ -167,6 +167,12 @@ export const useCallingStore = defineStore('calling', () => {
   }
 
   async function acceptTransfer(id: string) {
+    // Snapshot the transfer before the API call — the server broadcasts
+    // call_transfer_connected immediately which removes it from waitingTransfers
+    // via the WebSocket handler before this function completes.
+    const transfer = waitingTransfers.value.find(t => t.id === id)
+    waitingTransfers.value = waitingTransfers.value.filter(t => t.id !== id)
+
     // Get microphone access
     let stream: MediaStream
     try {
@@ -237,12 +243,10 @@ export const useCallingStore = defineStore('calling', () => {
       sdp: sdpAnswer
     }))
 
-    // Transfer is now connected
-    const transfer = waitingTransfers.value.find(t => t.id === id)
+    // Transfer is now connected — use the snapshot taken before the API call
     if (transfer) {
       activeTransfer.value = { ...transfer, status: 'connected' }
     }
-    waitingTransfers.value = waitingTransfers.value.filter(t => t.id !== id)
     isOnCall.value = true
     callDuration.value = 0
 
