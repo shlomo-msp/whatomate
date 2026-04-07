@@ -640,8 +640,8 @@ onMounted(async () => {
           </Select>
         </div>
         <div v-if="form.header_type === 'TEXT'" class="space-y-1.5">
-          <Label class="text-xs">{{ $t('templates.headerContent', 'Header Content') }}</Label>
-          <Input v-model="form.header_content" :disabled="!canWrite || !isEditable" />
+          <Label class="text-xs" for="header-content">{{ $t('templates.headerContent', 'Header Content') }}</Label>
+          <Input id="header-content" v-model="form.header_content" :disabled="!canWrite || !isEditable" />
         </div>
 
         <!-- Header Media Upload for IMAGE/VIDEO/DOCUMENT -->
