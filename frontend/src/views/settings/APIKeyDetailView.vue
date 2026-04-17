@@ -20,6 +20,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Switch } from '@/components/ui/switch'
 import { Key, Trash2, Save, Copy, AlertTriangle } from 'lucide-vue-next'
 import { IconButton } from '@/components/shared'
 
@@ -110,6 +111,17 @@ async function create() {
     toast.error(getErrorMessage(e, t('common.failedCreate', { resource: t('resources.APIKey', 'API key') })))
   } finally {
     isSaving.value = false
+  }
+}
+
+async function toggleActive() {
+  if (!apiKey.value) return
+  try {
+    await apiKeysService.update(apiKey.value.id, { is_active: !apiKey.value.is_active })
+    toast.success(apiKey.value.is_active ? t('common.disabledSuccess', { resource: t('resources.APIKey', 'API Key') }) : t('common.enabledSuccess', { resource: t('resources.APIKey', 'API Key') }))
+    await loadApiKey()
+  } catch (e) {
+    toast.error(getErrorMessage(e, t('common.failedToggle', { resource: t('resources.apiKey', 'API key') })))
   }
 }
 
@@ -215,6 +227,14 @@ onMounted(async () => {
                 <Badge v-if="isExpired" variant="destructive" class="text-xs">{{ $t('apiKeys.expired', 'Expired') }}</Badge>
               </div>
             </div>
+          </div>
+          <div v-if="canWrite" class="flex items-center justify-between border-t pt-4">
+            <Label class="text-xs font-normal cursor-pointer">{{ $t('common.active') }}</Label>
+            <Switch
+              :checked="apiKey?.is_active ?? false"
+              :disabled="isExpired"
+              @update:checked="toggleActive"
+            />
           </div>
         </CardContent>
       </Card>

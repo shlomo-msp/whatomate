@@ -157,6 +157,8 @@ export const apiKeysService = {
   get: (id: string) => api.get(`/api-keys/${id}`),
   create: (data: { name: string; expires_at?: string }) =>
     api.post('/api-keys', data),
+  update: (id: string, data: { is_active?: boolean }) =>
+    api.put(`/api-keys/${id}`, data),
   delete: (id: string) => api.delete(`/api-keys/${id}`)
 }
 

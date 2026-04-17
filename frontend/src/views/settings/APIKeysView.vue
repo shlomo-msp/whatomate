@@ -4,12 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { apiKeysService } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader, DataTable, SearchInput, DeleteConfirmDialog, IconButton, ErrorState, type Column } from '@/components/shared'
 import { toast } from 'vue-sonner'
-import { Plus, Trash2, Key } from 'lucide-vue-next'
+import { Plus, Trash2, Pencil, Key } from 'lucide-vue-next'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useSearchPagination } from '@/composables/useSearchPagination'
@@ -90,6 +90,14 @@ async function deleteAPIKey() {
   }
 }
 
+async function toggleActive(key: APIKey) {
+  try {
+    await apiKeysService.update(key.id, { is_active: !key.is_active })
+    await fetchItems()
+    toast.success(key.is_active ? t('common.disabledSuccess', { resource: t('resources.APIKey', 'API Key') }) : t('common.enabledSuccess', { resource: t('resources.APIKey', 'API Key') }))
+  } catch (e) { toast.error(getErrorMessage(e, t('common.failedToggle', { resource: t('resources.apiKey', 'API key') }))) }
+}
+
 function formatDateTime(dateStr: string | null) { return dateStr ? formatDate(dateStr, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : t('apiKeys.never') }
 function isExpired(expiresAt: string | null) { return expiresAt ? new Date(expiresAt) < new Date() : false }
 
@@ -135,12 +143,20 @@ onMounted(() => fetchItems())
                 <template #cell-last_used="{ item: key }">{{ formatDateTime(key.last_used_at) }}</template>
                 <template #cell-expires="{ item: key }">{{ formatDateTime(key.expires_at) }}</template>
                 <template #cell-status="{ item: key }">
-                  <Badge variant="outline" :class="isExpired(key.expires_at) ? 'border-destructive text-destructive' : key.is_active ? 'border-green-600 text-green-600' : ''">
-                    {{ isExpired(key.expires_at) ? $t('apiKeys.expired') : key.is_active ? $t('common.active') : $t('common.inactive') }}
-                  </Badge>
+                  <div class="flex items-center gap-2">
+                    <Switch :checked="key.is_active && !isExpired(key.expires_at)" :disabled="isExpired(key.expires_at)" @update:checked="toggleActive(key)" />
+                    <span class="text-sm text-muted-foreground">
+                      {{ isExpired(key.expires_at) ? $t('apiKeys.expired') : key.is_active ? $t('common.active') : $t('common.inactive') }}
+                    </span>
+                  </div>
                 </template>
                 <template #cell-actions="{ item: key }">
-                  <IconButton v-if="canDelete" :icon="Trash2" :label="$t('apiKeys.deleteApiKeyLabel')" variant="ghost" class="text-destructive" @click="keyToDelete = key; isDeleteDialogOpen = true" />
+                  <div class="flex items-center justify-end gap-1">
+                    <RouterLink :to="`/settings/api-keys/${key.id}`">
+                      <IconButton :icon="Pencil" :label="$t('common.edit')" class="h-8 w-8" />
+                    </RouterLink>
+                    <IconButton v-if="canDelete" :icon="Trash2" :label="$t('apiKeys.deleteApiKeyLabel')" variant="ghost" class="h-8 w-8 text-destructive" @click="keyToDelete = key; isDeleteDialogOpen = true" />
+                  </div>
                 </template>
                 <template #empty-action>
                   <RouterLink v-if="canWrite" to="/settings/api-keys/new">

@@ -597,6 +597,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/api-keys", app.ListAPIKeys)
 	g.GET("/api/api-keys/{id}", app.GetAPIKey)
 	g.POST("/api/api-keys", app.CreateAPIKey)
+	g.PUT("/api/api-keys/{id}", app.UpdateAPIKey)
 	g.DELETE("/api/api-keys/{id}", app.DeleteAPIKey)
 
 	// Accounts
