@@ -154,6 +154,7 @@ export const usersService = {
 export const apiKeysService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{ api_keys: any[]; total?: number }>('/api-keys', { params }),
+  get: (id: string) => api.get(`/api-keys/${id}`),
   create: (data: { name: string; expires_at?: string }) =>
     api.post('/api-keys', data),
   delete: (id: string) => api.delete(`/api-keys/${id}`)

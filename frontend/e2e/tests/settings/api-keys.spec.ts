@@ -35,18 +35,15 @@ test.describe('API Keys Management', () => {
     await apiKeysPage.fillApiKeyForm(keyName)
     await apiKeysPage.submitDialog()
 
-    // Should show the key display dialog
     await apiKeysPage.expectKeyCreatedDialog()
     await apiKeysPage.closeKeyCreatedDialog()
 
-    // Key should appear in table
     await apiKeysPage.expectRowExists(keyName)
   })
 
   test('should create API key with expiration', async () => {
     const keyName = `Expiring Key ${Date.now()}`
 
-    // Set expiration to tomorrow
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
     const dateStr = tomorrow.toISOString().slice(0, 16)
@@ -55,30 +52,44 @@ test.describe('API Keys Management', () => {
     await apiKeysPage.fillApiKeyForm(keyName, dateStr)
     await apiKeysPage.submitDialog()
 
-    // Should show the key display dialog
     await apiKeysPage.expectKeyCreatedDialog()
     await apiKeysPage.closeKeyCreatedDialog()
 
-    // Key should appear in table
     await apiKeysPage.expectRowExists(keyName)
   })
 
+  test('should navigate to API key detail view', async ({ page }) => {
+    const keyName = `Detail Key ${Date.now()}`
+
+    await apiKeysPage.openCreateDialog()
+    await apiKeysPage.fillApiKeyForm(keyName)
+    await apiKeysPage.submitDialog()
+    await apiKeysPage.expectKeyCreatedDialog()
+    await apiKeysPage.closeKeyCreatedDialog()
+
+    // Click the name link to navigate to detail view
+    await page.locator('tbody tr .font-medium').getByText(keyName, { exact: true }).first().click()
+    await page.waitForURL(/\/settings\/api-keys\/[a-f0-9-]+$/)
+    await page.waitForLoadState('networkidle')
+
+    // Should show the key name on the detail page
+    await expect(page.getByText(keyName)).toBeVisible()
+    // Should show the key prefix
+    await expect(page.locator('code').filter({ hasText: 'whm_' }).first()).toBeVisible()
+  })
+
   test('should delete API key', async () => {
-    // First create a key to delete
     const keyName = `Delete Key ${Date.now()}`
 
     await apiKeysPage.openCreateDialog()
     await apiKeysPage.fillApiKeyForm(keyName)
     await apiKeysPage.submitDialog()
 
-    // Wait for key created dialog
     await apiKeysPage.expectKeyCreatedDialog()
     await apiKeysPage.closeKeyCreatedDialog()
 
-    // Wait for table to update
     await apiKeysPage.expectRowExists(keyName)
 
-    // Delete the key (API keys have single delete button, index 0)
     await apiKeysPage.clickRowButton(keyName, 0)
     await expect(apiKeysPage.alertDialog).toBeVisible()
     await apiKeysPage.confirmDelete()
