@@ -16,11 +16,12 @@ import (
 // Note: is_super_admin is intentionally excluded to prevent mass assignment.
 // Super admin status changes are handled via parseSuperAdminField.
 type UserRequest struct {
-	Email    string     `json:"email"`
-	Password string     `json:"password"`
-	FullName string     `json:"full_name"`
-	RoleID   *uuid.UUID `json:"role_id"`
-	IsActive *bool      `json:"is_active"`
+	Email        string     `json:"email"`
+	Password     string     `json:"password"`
+	FullName     string     `json:"full_name"`
+	RoleID       *uuid.UUID `json:"role_id"`
+	IsActive     *bool      `json:"is_active"`
+	TOTPRequired *bool      `json:"totp_required"`
 }
 
 // superAdminField is used to extract is_super_admin separately from the request body.
@@ -48,6 +49,8 @@ type UserResponse struct {
 	IsActive       bool         `json:"is_active"`
 	IsAvailable    bool         `json:"is_available"`
 	IsSuperAdmin   bool         `json:"is_super_admin"`
+	TOTPEnabled    bool         `json:"totp_enabled"`
+	TOTPRequired   bool         `json:"totp_required"`
 	IsMember       bool         `json:"is_member"`
 	OrganizationID uuid.UUID    `json:"organization_id"`
 	Settings       models.JSONB `json:"settings,omitempty"`
@@ -329,6 +332,10 @@ func (a *App) CreateUser(r *fastglue.Request) error {
 		IsSuperAdmin:   isSuperAdmin,
 	}
 
+	if req.TOTPRequired != nil {
+		user.TOTPRequired = *req.TOTPRequired
+	}
+
 	if err := a.DB.Create(&user).Error; err != nil {
 		a.Log.Error("Failed to create user", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create user", nil, "")
@@ -504,6 +511,13 @@ func (a *App) UpdateUser(r *fastglue.Request) error {
 		user.IsSuperAdmin = *saField
 	}
 
+	if req.TOTPRequired != nil {
+		if currentUserID != id && !a.HasPermission(currentUserID, models.ResourceUsers, models.ActionWrite) {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions to update 2FA requirement", nil, "")
+		}
+		user.TOTPRequired = *req.TOTPRequired
+	}
+
 	if err := a.DB.Save(&user).Error; err != nil {
 		a.Log.Error("Failed to update user", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update user", nil, "")
@@ -627,9 +641,9 @@ func (a *App) GetCurrentUser(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "User not found", nil, "")
 	}
 
-	// Use org from JWT context (may differ from DB after org switch)
-	orgID, _ := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if orgID != uuid.Nil {
+	// Resolve effective org the same way as all permission checks (supports X-Organization-ID override).
+	orgID, err := a.getOrgID(r)
+	if err == nil && orgID != uuid.Nil {
 		user.OrganizationID = orgID
 
 		// Check for org-specific role from user_organizations
@@ -808,6 +822,8 @@ func userToResponse(user models.User) UserResponse {
 		IsActive:       user.IsActive,
 		IsAvailable:    user.IsAvailable,
 		IsSuperAdmin:   user.IsSuperAdmin,
+		TOTPEnabled:    user.TOTPEnabled,
+		TOTPRequired:   user.TOTPRequired,
 		OrganizationID: user.OrganizationID,
 		Settings:       user.Settings,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z"),
@@ -842,12 +858,12 @@ func userToResponse(user models.User) UserResponse {
 
 // MyOrganizationResponse represents an organization in the user's org list
 type MyOrganizationResponse struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Name           string    `json:"name"`
-	Slug           string    `json:"slug"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Name           string     `json:"name"`
+	Slug           string     `json:"slug"`
 	RoleID         *uuid.UUID `json:"role_id,omitempty"`
-	RoleName       string    `json:"role_name,omitempty"`
-	IsDefault      bool      `json:"is_default"`
+	RoleName       string     `json:"role_name,omitempty"`
+	IsDefault      bool       `json:"is_default"`
 }
 
 // ListMyOrganizations returns all organizations the current user belongs to
@@ -958,10 +974,10 @@ func (a *App) UpdateAvailability(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(map[string]any{
-		"message":             "Availability updated successfully",
-		"is_available":        user.IsAvailable,
-		"status":              status,
-		"break_started_at":    breakStartedAt,
-		"transfers_to_queue":  transfersReturned,
+		"message":            "Availability updated successfully",
+		"is_available":       user.IsAvailable,
+		"status":             status,
+		"break_started_at":   breakStartedAt,
+		"transfers_to_queue": transfersReturned,
 	})
 }

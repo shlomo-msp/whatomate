@@ -138,7 +138,7 @@ export const usersService = {
   get: (id: string) => api.get(`/users/${id}`),
   create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
     api.post('/users', data),
-  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
+  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean; totp_required?: boolean }) =>
     api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   me: () => api.get('/me'),
@@ -148,6 +148,14 @@ export const usersService = {
     api.put('/me/password', data),
   updateAvailability: (isAvailable: boolean) =>
     api.put('/me/availability', { is_available: isAvailable }),
+  setupTwoFA: () =>
+    api.post('/me/2fa/setup'),
+  verifyTwoFA: (code: string) =>
+    api.post('/me/2fa/verify', { code }),
+  disableTwoFA: (currentPassword: string) =>
+    api.post('/me/2fa/disable', { current_password: currentPassword }),
+  resetTwoFA: (currentPassword: string) =>
+    api.post('/me/2fa/reset', { current_password: currentPassword }),
   listMyOrganizations: () => api.get('/me/organizations'),
 }
 
@@ -242,6 +250,8 @@ export const dataService = {
 export const messagesService = {
   list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string; account?: string }) =>
     api.get(`/contacts/${contactId}/messages`, { params }),
+  get: (messageId: string) =>
+    api.get(`/messages/${messageId}`),
   send: (contactId: string, data: { type: string; content: any; reply_to_message_id?: string; whatsapp_account?: string }) =>
     api.post(`/contacts/${contactId}/messages`, data),
   sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; button_params?: Record<string, string>; account_name?: string }, headerFile?: File) => {
@@ -642,6 +652,9 @@ export const organizationService = {
     mask_phone_numbers?: boolean
     timezone?: string
     date_format?: string
+    auto_delete_media_enabled?: boolean
+    auto_delete_media_days?: number
+    require_2fa?: boolean
     name?: string
     calling_enabled?: boolean
     max_call_duration?: number
@@ -669,6 +682,7 @@ export interface Organization {
 export const organizationsService = {
   list: () => api.get<{ organizations: Organization[] }>('/organizations'),
   create: (data: { name: string }) => api.post('/organizations', data),
+  delete: (id: string) => api.delete(`/organizations/${id}`),
   // Members
   addMember: (data: { user_id?: string; email?: string; role_id?: string }) =>
     api.post('/organizations/members', data),
@@ -682,6 +696,8 @@ export interface Webhook {
   headers: Record<string, string>
   is_active: boolean
   has_secret: boolean
+  failed_count?: number
+  retrying_count?: number
   created_at: string
   updated_at: string
 }
@@ -808,7 +824,8 @@ export const webhooksService = {
     is_active?: boolean
   }) => api.put<Webhook>(`/webhooks/${id}`, data),
   delete: (id: string) => api.delete(`/webhooks/${id}`),
-  test: (id: string) => api.post(`/webhooks/${id}/test`)
+  test: (id: string) => api.post(`/webhooks/${id}/test`),
+  retryFailed: (id: string) => api.post(`/webhooks/${id}/retry-failed`)
 }
 
 export interface CustomAction {

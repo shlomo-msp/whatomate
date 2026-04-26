@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from 'vue-sonner'
 import { MessageSquare, Loader2 } from 'lucide-vue-next'
 
@@ -24,6 +25,12 @@ const authStore = useAuthStore()
 
 const email = ref('')
 const password = ref('')
+const twoFACode = ref('')
+const twoFAToken = ref('')
+const twoFASetupToken = ref('')
+const twoFASetupData = ref<{ secret: string; otpauth_url: string; qr_code: string } | null>(null)
+const twoFADialogOpen = ref(false)
+const twoFASetupDialogOpen = ref(false)
 const isLoading = ref(false)
 const ssoProviders = ref<SSOProvider[]>([])
 
@@ -72,13 +79,90 @@ const handleLogin = async () => {
   isLoading.value = true
 
   try {
-    await authStore.login(email.value, password.value)
-    toast.success(t('auth.loginSuccess'))
+    const result = await authStore.login(email.value, password.value)
+    if (result.requires_2fa) {
+      twoFAToken.value = result.two_fa_token || ''
+      twoFACode.value = ''
+      twoFADialogOpen.value = true
+      toast.message('Two-factor authentication required')
+      return
+    }
+    if (result.requires_2fa_setup) {
+      twoFASetupToken.value = result.two_fa_setup_token || ''
+      twoFACode.value = ''
+      if (!twoFASetupToken.value) {
+        toast.error('Missing setup token. Please sign in again.')
+        return
+      }
+      try {
+        twoFASetupData.value = await authStore.setupTwoFA(twoFASetupToken.value)
+      } catch (error: any) {
+        const message = error.response?.data?.message || 'Failed to start 2FA setup'
+        toast.error(message)
+        return
+      }
+      twoFASetupDialogOpen.value = true
+      toast.message('Set up two-factor authentication')
+      return
+    }
 
+    toast.success(t('auth.loginSuccess'))
     const redirect = route.query.redirect as string
     router.push(redirect || '/')
   } catch (error: any) {
     const message = error.response?.data?.message || t('auth.invalidCredentials')
+    toast.error(message)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleVerifyTwoFA = async () => {
+  if (!twoFACode.value.trim()) {
+    toast.error('Enter your verification code')
+    return
+  }
+  if (!twoFAToken.value) {
+    toast.error('Missing 2FA token. Please sign in again.')
+    twoFARequired.value = false
+    return
+  }
+
+  isLoading.value = true
+  try {
+    await authStore.verifyTwoFA(twoFAToken.value, twoFACode.value.trim())
+    twoFADialogOpen.value = false
+    toast.success('Login successful')
+    const redirect = route.query.redirect as string
+    router.push(redirect || '/')
+  } catch (error: any) {
+    const message = error.response?.data?.message || 'Invalid verification code'
+    toast.error(message)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleVerifyTwoFASetup = async () => {
+  if (!twoFACode.value.trim()) {
+    toast.error('Enter your verification code')
+    return
+  }
+  if (!twoFASetupToken.value) {
+    toast.error('Missing setup token. Please sign in again.')
+    twoFASetupDialogOpen.value = false
+    return
+  }
+
+  isLoading.value = true
+  try {
+    await authStore.verifyTwoFA(twoFASetupToken.value, twoFACode.value.trim())
+    twoFASetupDialogOpen.value = false
+    toast.success('Login successful')
+    const redirect = route.query.redirect as string
+    router.push(redirect || '/')
+  } catch (error: any) {
+    const message = error.response?.data?.message || 'Invalid verification code'
     toast.error(message)
   } finally {
     isLoading.value = false
@@ -170,5 +254,76 @@ const initiateSSO = (provider: string) => {
         </p>
       </div>
     </div>
+
+    <Dialog v-model:open="twoFADialogOpen">
+    <DialogContent class="sm:max-w-[420px]">
+      <form @submit.prevent="handleVerifyTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Two-Factor Authentication</DialogTitle>
+          <DialogDescription>
+            Enter the 6-digit code from your authenticator app.
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2">
+          <Label for="twofa">Verification code</Label>
+          <Input
+            id="twofa"
+            v-model="twoFACode"
+            type="text"
+            placeholder="123456"
+            :disabled="isLoading"
+            autocomplete="one-time-code"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="twoFADialogOpen = false" :disabled="isLoading">Cancel</Button>
+          <Button type="submit" :disabled="isLoading">
+            <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+            Verify
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="twoFASetupDialogOpen">
+    <DialogContent class="sm:max-w-[480px]">
+      <form @submit.prevent="handleVerifyTwoFASetup" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
+          <DialogDescription>
+            Scan the QR code with your authenticator app, then enter the code to finish setup.
+          </DialogDescription>
+        </DialogHeader>
+        <div v-if="twoFASetupData" class="space-y-3">
+          <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
+            <img :src="twoFASetupData.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
+            <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+          </div>
+          <div class="space-y-1">
+            <Label>Manual entry key</Label>
+            <Input :model-value="twoFASetupData.secret" readonly />
+          </div>
+          <div class="space-y-1">
+            <Label for="twofa_setup_code">Verification code</Label>
+            <Input
+              id="twofa_setup_code"
+              v-model="twoFACode"
+              type="text"
+              placeholder="123456"
+              autocomplete="one-time-code"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="twoFASetupDialogOpen = false" :disabled="isLoading">Cancel</Button>
+          <Button type="submit" :disabled="isLoading">
+            <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+            Verify & Continue
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+    </Dialog>
   </div>
 </template>

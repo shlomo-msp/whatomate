@@ -34,6 +34,8 @@ export interface User {
   settings?: UserSettings
   is_available?: boolean
   is_super_admin?: boolean
+  totp_enabled?: boolean
+  totp_required?: boolean
 }
 
 export interface AuthState {
@@ -112,10 +114,39 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(email: string, password: string): Promise<void> {
+  async function login(email: string, password: string): Promise<{
+    requires_2fa: boolean
+    requires_2fa_setup: boolean
+    two_fa_token?: string
+    two_fa_setup_token?: string
+  }> {
     const response = await api.post('/auth/login', { email, password })
-    // Server sets cookies; response body has { user, expires_in }
-    setAuth({ user: response.data.data.user })
+    const data = response.data.data
+    if (data?.requires_2fa) {
+      return { requires_2fa: true, requires_2fa_setup: false, two_fa_token: data.two_fa_token }
+    }
+    if (data?.requires_2fa_setup) {
+      return { requires_2fa: false, requires_2fa_setup: true, two_fa_setup_token: data.two_fa_setup_token }
+    }
+    const userData = data?.user ?? data
+    if (userData) {
+      setAuth({ user: userData })
+    }
+    return { requires_2fa: false, requires_2fa_setup: false }
+  }
+
+  async function verifyTwoFA(twoFAToken: string, code: string): Promise<void> {
+    const response = await api.post('/auth/2fa/verify', { two_fa_token: twoFAToken, code })
+    const data = response.data.data
+    const userData = data?.user ?? data
+    if (userData) {
+      setAuth({ user: userData })
+    }
+  }
+
+  async function setupTwoFA(twoFAToken: string): Promise<{ secret: string; otpauth_url: string; qr_code: string }> {
+    const response = await api.post('/auth/2fa/setup', { two_fa_token: twoFAToken })
+    return response.data.data
   }
 
   async function register(data: {
@@ -182,6 +213,20 @@ export const useAuthStore = defineStore('auth', () => {
     return permissions.some(p => p.resource === resource && p.action === action)
   }
 
+  // Check if user has any permission for a resource
+  function hasAnyPermission(resource: string): boolean {
+    if (user.value?.is_super_admin) {
+      return true
+    }
+
+    const permissions = user.value?.role?.permissions
+    if (!permissions || permissions.length === 0) {
+      return false
+    }
+
+    return permissions.some(p => p.resource === resource)
+  }
+
   return {
     user,
     breakStartedAt,
@@ -200,6 +245,9 @@ export const useAuthStore = defineStore('auth', () => {
     switchOrg,
     logout,
     setAvailability,
-    hasPermission
+    hasPermission,
+    hasAnyPermission,
+    verifyTwoFA,
+    setupTwoFA
   }
 })

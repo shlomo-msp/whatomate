@@ -37,9 +37,10 @@ interface UserFormData {
   role_id: string
   is_active: boolean
   is_super_admin: boolean
+  totp_required: boolean
 }
 
-const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false }
+const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false, totp_required: false }
 
 const {
   isLoading, isSubmitting, isDialogOpen, deleteDialogOpen, itemToDelete: userToDelete,
@@ -108,6 +109,7 @@ async function createUser() {
       full_name: formData.value.full_name,
       role_id: formData.value.role_id || undefined,
       is_super_admin: isSuperAdmin.value && formData.value.is_super_admin ? true : undefined,
+      totp_required: formData.value.totp_required,
     })
     toast.success(t('common.createdSuccess', { resource: t('resources.User') }))
     closeDialog()
@@ -296,6 +298,13 @@ async function copyInviteLink() {
               </SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div class="flex items-center justify-between border-t pt-4">
+          <div>
+            <Label for="totp_required" class="font-normal cursor-pointer">Require 2FA</Label>
+            <p class="text-xs text-muted-foreground">User must set up 2FA on next login</p>
+          </div>
+          <Switch id="totp_required" :checked="formData.totp_required" @update:checked="formData.totp_required = $event" />
         </div>
         <div v-if="isSuperAdmin" class="flex items-center justify-between border-t pt-4"><div><Label for="is_super_admin" class="font-normal cursor-pointer">{{ $t('users.superAdminLabel') }}</Label><p class="text-xs text-muted-foreground">{{ $t('users.superAdminDesc') }}</p></div><Switch id="is_super_admin" :checked="formData.is_super_admin" @update:checked="formData.is_super_admin = $event" /></div>
       </div>

@@ -10,11 +10,20 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PageHeader, AuditLogPanel } from '@/components/shared'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import { toast } from 'vue-sonner'
 import { Settings, Bell, Loader2, Globe, Phone, Upload, Play, Pause, Music } from 'lucide-vue-next'
-import { usersService, organizationService } from '@/services/api'
+import { usersService, organizationService, organizationsService } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useOrganizationsStore } from '@/stores/organizations'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -31,13 +40,43 @@ const userID = computed(() => authStore.user?.id || '')
 
 const isSubmitting = ref(false)
 const isLoading = ref(true)
+const showDeleteDialog = ref(false)
+const isDeleting = ref(false)
+
+const organizationsStore = useOrganizationsStore()
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false)
+
+const oldestOrgId = computed(() => {
+  if (!organizationsStore.organizations.length) return null
+  let oldest = organizationsStore.organizations[0]
+  for (const org of organizationsStore.organizations) {
+    const orgDate = new Date(org.created_at)
+    const oldestDate = new Date(oldest.created_at)
+    if (orgDate < oldestDate) {
+      oldest = org
+    }
+  }
+  return oldest.id
+})
+
+const canDeleteOrg = computed(() => {
+  if (!isSuperAdmin.value) return false
+  if (!organizationsStore.selectedOrgId) return false
+  if (organizationsStore.organizations.length <= 1) return false
+  if (authStore.user?.organization_id && organizationsStore.selectedOrgId === authStore.user.organization_id) return false
+  if (oldestOrgId.value && organizationsStore.selectedOrgId === oldestOrgId.value) return false
+  return true
+})
 
 // General Settings
 const generalSettings = ref({
   organization_name: 'My Organization',
   default_timezone: 'UTC',
   date_format: 'YYYY-MM-DD',
-  mask_phone_numbers: false
+  mask_phone_numbers: false,
+  auto_delete_media_enabled: false,
+  auto_delete_media_days: '30',
+  require_2fa: false
 })
 
 // Notification Settings
@@ -90,7 +129,10 @@ onMounted(async () => {
         organization_name: orgData.name || 'My Organization',
         default_timezone: orgData.settings?.timezone || 'UTC',
         date_format: orgData.settings?.date_format || 'YYYY-MM-DD',
-        mask_phone_numbers: orgData.settings?.mask_phone_numbers || false
+        mask_phone_numbers: orgData.settings?.mask_phone_numbers || false,
+        auto_delete_media_enabled: orgData.settings?.auto_delete_media_enabled || false,
+        auto_delete_media_days: String(orgData.settings?.auto_delete_media_days || 30),
+        require_2fa: orgData.settings?.require_2fa || false
       }
       callingSettings.value = {
         calling_enabled: orgData.settings?.calling_enabled || false,
@@ -110,6 +152,14 @@ onMounted(async () => {
         campaign_updates: user.settings.campaign_updates ?? true
       }
     }
+
+    if (isSuperAdmin.value) {
+      organizationsStore.init()
+      await organizationsStore.fetchOrganizations()
+      if (!organizationsStore.selectedOrgId && authStore.user?.organization_id) {
+        organizationsStore.selectOrganization(authStore.user.organization_id)
+      }
+    }
   } catch (error) {
     console.error('Failed to load settings:', error)
   } finally {
@@ -124,7 +174,10 @@ async function saveGeneralSettings() {
       name: generalSettings.value.organization_name,
       timezone: generalSettings.value.default_timezone,
       date_format: generalSettings.value.date_format,
-      mask_phone_numbers: generalSettings.value.mask_phone_numbers
+      mask_phone_numbers: generalSettings.value.mask_phone_numbers,
+      auto_delete_media_enabled: generalSettings.value.auto_delete_media_enabled,
+      auto_delete_media_days: Number(generalSettings.value.auto_delete_media_days),
+      require_2fa: generalSettings.value.require_2fa
     })
     toast.success(t('settings.generalSaved'))
     refreshActivityLog(generalLogKey)
@@ -149,6 +202,51 @@ async function saveNotificationSettings() {
     toast.error(t('common.failedSave', { resource: t('resources.notificationSettings') }))
   } finally {
     isSubmitting.value = false
+  }
+}
+
+const openDeleteDialog = () => {
+  if (!canDeleteOrg.value) {
+    if (organizationsStore.organizations.length <= 1) {
+      toast.error('Cannot delete the last organization')
+    } else if (authStore.user?.organization_id && organizationsStore.selectedOrgId === authStore.user.organization_id) {
+      toast.error('Cannot delete your current organization')
+    } else if (oldestOrgId.value && organizationsStore.selectedOrgId === oldestOrgId.value) {
+      toast.error('Cannot delete the default organization')
+    } else {
+      toast.error('Organization cannot be deleted')
+    }
+    return
+  }
+  showDeleteDialog.value = true
+}
+
+const deleteOrganization = async () => {
+  const orgId = organizationsStore.selectedOrgId
+  if (!orgId) return
+
+  if (!canDeleteOrg.value) {
+    openDeleteDialog()
+    return
+  }
+
+  isDeleting.value = true
+  try {
+    await organizationsService.delete(orgId)
+    await organizationsStore.fetchOrganizations()
+    const nextOrg = organizationsStore.organizations[0]
+    if (nextOrg?.id) {
+      organizationsStore.selectOrganization(nextOrg.id)
+      window.location.reload()
+    } else {
+      organizationsStore.clearSelection()
+    }
+    showDeleteDialog.value = false
+    toast.success('Organization deleted')
+  } catch (error: any) {
+    toast.error(error.response?.data?.message || 'Failed to delete organization')
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -302,11 +400,67 @@ function togglePlayAudio(type: 'hold_music' | 'ringback') {
                     @update:checked="generalSettings.mask_phone_numbers = $event"
                   />
                 </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">Auto Delete Media</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">Delete local media files after a set period</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.auto_delete_media_enabled"
+                    @update:checked="generalSettings.auto_delete_media_enabled = $event"
+                  />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="space-y-2">
+                    <Label for="media_cleanup_days" class="text-white/70 light:text-gray-700">Delete After</Label>
+                    <Select v-model="generalSettings.auto_delete_media_days" :disabled="!generalSettings.auto_delete_media_enabled">
+                      <SelectTrigger class="bg-white/[0.04] border-white/[0.1] text-white/70 light:bg-white light:border-gray-200 light:text-gray-700">
+                        <SelectValue placeholder="Select period" />
+                      </SelectTrigger>
+                      <SelectContent class="bg-[#141414] border-white/[0.08] light:bg-white light:border-gray-200">
+                        <SelectItem value="7" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">7 days</SelectItem>
+                        <SelectItem value="30" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">30 days</SelectItem>
+                        <SelectItem value="90" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">90 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">Require 2FA</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">Force users to set up two-factor authentication</p>
+                  </div>
+                  <Switch
+                    :checked="generalSettings.require_2fa"
+                    @update:checked="generalSettings.require_2fa = $event"
+                  />
+                </div>
                 <div class="flex justify-end">
                   <Button variant="outline" size="sm" class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50" @click="saveGeneralSettings" :disabled="isSubmitting">
                     <Loader2 v-if="isSubmitting" class="mr-2 h-4 w-4 animate-spin" />
                     {{ $t('settings.save') }}
                   </Button>
+                </div>
+                <div v-if="isSuperAdmin" class="pt-2">
+                  <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                  <div class="mt-4 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <p class="font-medium text-red-300 light:text-red-700">Delete Organization</p>
+                    <p class="text-sm text-red-200/80 light:text-red-600">
+                          Permanently delete this organization and all its data. Your current and default organizations cannot be deleted.
+                    </p>
+                      </div>
+                      <Button variant="destructive" size="sm" @click="openDeleteDialog" :disabled="!canDeleteOrg || isDeleting">
+                        Delete
+                      </Button>
+                    </div>
+                    <p v-if="!canDeleteOrg" class="mt-3 text-xs text-red-200/70 light:text-red-600">
+                      Deletion is disabled for your current organization, the default organization, or when only one organization exists.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -496,4 +650,28 @@ function togglePlayAudio(type: 'hold_music' | 'ringback') {
       </div>
     </ScrollArea>
   </div>
+
+  <Dialog v-model:open="showDeleteDialog">
+    <DialogContent class="sm:max-w-[420px]">
+      <DialogHeader>
+        <DialogTitle>Delete organization</DialogTitle>
+        <DialogDescription>
+          This will delete the selected organization and all of its data. This action cannot be undone.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+        You must have more than one organization. Your current and the default organization cannot be deleted.
+      </div>
+
+      <DialogFooter class="gap-2">
+        <Button variant="outline" @click="showDeleteDialog = false" :disabled="isDeleting">
+          Cancel
+        </Button>
+        <Button variant="destructive" @click="deleteOrganization" :disabled="isDeleting">
+          Delete
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

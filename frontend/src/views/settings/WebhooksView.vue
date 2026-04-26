@@ -11,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader, DataTable, SearchInput, DeleteConfirmDialog, ConfirmDialog, IconButton, ErrorState, type Column } from '@/components/shared'
 import { toast } from 'vue-sonner'
-import { Plus, Trash2, Pencil, Webhook as WebhookIcon, Play } from 'lucide-vue-next'
+import { Plus, Trash2, Pencil, Webhook as WebhookIcon, Play, RotateCw } from 'lucide-vue-next'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
@@ -27,6 +27,7 @@ const isLoading = ref(false)
 const isDeleting = ref(false)
 const isTesting = ref<string | null>(null)
 const error = ref(false)
+const isRetrying = ref<string | null>(null)
 
 const canWrite = computed(() => authStore.hasPermission('webhooks', 'write'))
 const canDelete = computed(() => authStore.hasPermission('webhooks', 'delete'))
@@ -117,6 +118,23 @@ async function testWebhook(webhook: Webhook) {
   finally { isTesting.value = null }
 }
 
+async function retryFailed(webhook: Webhook) {
+  isRetrying.value = webhook.id
+  try {
+    const response = await webhooksService.retryFailed(webhook.id)
+    const count = (response.data as any).data?.count ?? response.data?.count ?? 0
+    if (count > 0) {
+      toast.success(`Retry scheduled for ${count} delivery${count === 1 ? '' : 'ies'}`)
+    } else {
+      toast.message('No failed deliveries to retry')
+    }
+  } catch (e) {
+    toast.error(getErrorMessage(e, 'Failed to retry deliveries'))
+  } finally {
+    isRetrying.value = null
+  }
+}
+
 async function deleteWebhook() {
   if (!webhookToDelete.value) return
   isDeleting.value = true
@@ -179,12 +197,19 @@ onMounted(() => fetchWebhooks())
                   <div class="flex items-center gap-2">
                     <Switch :checked="webhook.is_active" @update:checked="handleToggleWebhook(webhook)" />
                     <span class="text-sm text-muted-foreground">{{ webhook.is_active ? $t('common.active') : $t('common.inactive') }}</span>
+                    <Badge v-if="(webhook.retrying_count || 0) > 0" variant="outline" class="text-xs">
+                      Retrying: {{ webhook.retrying_count }}
+                    </Badge>
+                    <Badge v-if="(webhook.failed_count || 0) > 0" variant="destructive" class="text-xs">
+                      Failed: {{ webhook.failed_count }}
+                    </Badge>
                   </div>
                 </template>
                 <template #cell-created="{ item: webhook }"><span class="text-muted-foreground">{{ formatDate(webhook.created_at) }}</span></template>
                 <template #cell-actions="{ item: webhook }">
                   <div class="flex items-center justify-end gap-1">
                     <IconButton :icon="Play" :label="$t('webhooks.testWebhook')" class="h-8 w-8" :disabled="isTesting === webhook.id" :loading="isTesting === webhook.id" @click="testWebhook(webhook)" />
+                    <IconButton v-if="(webhook.failed_count || 0) > 0 || (webhook.retrying_count || 0) > 0" :icon="RotateCw" label="Retry failed deliveries" class="h-8 w-8" :disabled="isRetrying === webhook.id" :loading="isRetrying === webhook.id" @click="retryFailed(webhook)" />
                     <RouterLink :to="`/settings/webhooks/${webhook.id}`">
                       <IconButton :icon="Pencil" :label="$t('common.edit')" class="h-8 w-8" />
                     </RouterLink>

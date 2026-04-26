@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/audit"
 	"github.com/shridarpatil/whatomate/internal/models"
-	"gorm.io/gorm"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
+	"gorm.io/gorm"
 )
 
 // IVRFlowRequest represents the request body for creating/updating an IVR flow
@@ -44,12 +44,14 @@ func (a *App) ListIVRFlows(r *fastglue.Request) error {
 	account := string(r.RequestCtx.QueryArgs().Peek("account"))
 
 	query := a.DB.Where("organization_id = ?", orgID).Order("created_at DESC")
+	countQuery := a.DB.Model(&models.IVRFlow{}).Where("organization_id = ?", orgID)
 	if account != "" {
 		query = query.Where("whatsapp_account = ?", account)
+		countQuery = countQuery.Where("whatsapp_account = ?", account)
 	}
 
 	var total int64
-	a.DB.Model(&models.IVRFlow{}).Where("organization_id = ?", orgID).Count(&total)
+	countQuery.Count(&total)
 
 	var flows []models.IVRFlow
 	if err := pg.Apply(query).Find(&flows).Error; err != nil {

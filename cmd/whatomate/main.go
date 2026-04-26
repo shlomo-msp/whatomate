@@ -277,6 +277,18 @@ func runServer(args []string) {
 	go slaProcessor.Start(slaCtx)
 	lo.Info("SLA processor started")
 
+	// Start webhook delivery processor (runs every minute)
+	webhookDeliveryProcessor := handlers.NewWebhookDeliveryProcessor(app, time.Minute)
+	webhookDeliveryCtx, webhookDeliveryCancel := context.WithCancel(context.Background())
+	go webhookDeliveryProcessor.Start(webhookDeliveryCtx)
+	lo.Info("Webhook delivery processor started")
+
+	// Start media cleanup processor (runs every 6 hours)
+	mediaCleanupProcessor := handlers.NewMediaCleanupProcessor(app, 6*time.Hour)
+	mediaCleanupCtx, mediaCleanupCancel := context.WithCancel(context.Background())
+	go mediaCleanupProcessor.Start(mediaCleanupCtx)
+	lo.Info("Media cleanup processor started")
+
 	// Start embedded workers
 	var workers []*worker.Worker
 	var workerCancel context.CancelFunc
@@ -320,7 +332,16 @@ func runServer(args []string) {
 	lo.Info("Stopping SLA processor...")
 	slaCancel()
 	slaProcessor.Stop()
+	lo.Info("Stopping media cleanup processor...")
+	mediaCleanupCancel()
+	mediaCleanupProcessor.Stop()
 	lo.Info("SLA processor stopped")
+
+	// Stop webhook delivery processor
+	lo.Info("Stopping webhook delivery processor...")
+	webhookDeliveryCancel()
+	webhookDeliveryProcessor.Stop()
+	lo.Info("Webhook delivery processor stopped")
 
 	// Stop workers first
 	if workerCancel != nil {
@@ -474,6 +495,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		g.POST("/api/auth/register", app.Register)
 		g.POST("/api/auth/refresh", app.RefreshToken)
 	}
+	g.POST("/api/auth/2fa/setup", app.SetupTOTPWithToken)
+	g.POST("/api/auth/2fa/verify", app.VerifyTwoFALogin)
 	g.POST("/api/auth/logout", app.Logout)
 	g.POST("/api/auth/switch-org", app.SwitchOrg)
 	g.GET("/api/auth/ws-token", app.GetWSToken)
@@ -511,6 +534,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
 			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
+			path == "/api/auth/2fa/verify" || path == "/api/auth/2fa/setup" ||
 			path == "/api/auth/logout" || path == "/api/webhook" || path == "/ws" {
 			return r
 		}
@@ -576,6 +600,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.PUT("/api/me/settings", app.UpdateCurrentUserSettings)
 	g.PUT("/api/me/password", app.ChangePassword)
 	g.PUT("/api/me/availability", app.UpdateAvailability)
+	g.POST("/api/me/2fa/setup", app.SetupTOTP)
+	g.POST("/api/me/2fa/verify", app.VerifyTOTP)
+	g.POST("/api/me/2fa/disable", app.DisableTOTP)
+	g.POST("/api/me/2fa/reset", app.ResetTOTP)
 	g.GET("/api/me/organizations", app.ListMyOrganizations)
 
 	// User Management (admin only - enforced by middleware)
@@ -638,6 +666,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/contacts/{id}/messages", app.GetMessages)
 	g.POST("/api/contacts/{id}/messages", app.SendMessage)
 	g.POST("/api/contacts/{id}/messages/{message_id}/reaction", app.SendReaction)
+	g.GET("/api/messages/{id}", app.GetMessageByID)
 	g.POST("/api/messages", app.SendMessage) // Legacy route
 	g.POST("/api/messages/template", app.SendTemplateMessage)
 	g.POST("/api/messages/media", app.SendMediaMessage)
@@ -782,6 +811,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/organizations", app.ListOrganizations)
 	g.POST("/api/organizations", app.CreateOrganization)
 	g.GET("/api/organizations/current", app.GetCurrentOrganization)
+	g.DELETE("/api/organizations/{id}", app.DeleteOrganization)
 	g.GET("/api/organizations/members", app.ListOrganizationMembers)
 	g.POST("/api/organizations/members", app.AddOrganizationMember)
 	g.PUT("/api/organizations/members/{member_id}", app.UpdateOrganizationMemberRole)
@@ -799,6 +829,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.PUT("/api/webhooks/{id}", app.UpdateWebhook)
 	g.DELETE("/api/webhooks/{id}", app.DeleteWebhook)
 	g.POST("/api/webhooks/{id}/test", app.TestWebhook)
+	g.POST("/api/webhooks/{id}/retry-failed", app.RetryFailedWebhookDeliveries)
 
 	// Custom Actions
 	g.GET("/api/custom-actions", app.ListCustomActions)
@@ -889,13 +920,12 @@ func withRateLimit(handler fastglue.FastRequestHandler, opts middleware.RateLimi
 func corsWrapper(next fasthttp.RequestHandler, allowedOrigins map[string]bool) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		origin := string(ctx.Request.Header.Peek("Origin"))
+		allowed := origin != "" && (len(allowedOrigins) == 0 || middleware.IsOriginAllowed(origin, allowedOrigins))
 
-		if origin != "" && middleware.IsOriginAllowed(origin, allowedOrigins) {
+		if allowed {
 			ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
 			ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
-		} else if len(allowedOrigins) == 0 && origin != "" {
-			// Development: no whitelist configured
-			ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
+			ctx.Response.Header.Set("Vary", "Origin")
 		}
 
 		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
@@ -904,6 +934,10 @@ func corsWrapper(next fasthttp.RequestHandler, allowedOrigins map[string]bool) f
 
 		// Handle preflight OPTIONS requests
 		if string(ctx.Method()) == "OPTIONS" {
+			if origin != "" && !allowed {
+				ctx.SetStatusCode(fasthttp.StatusForbidden)
+				return
+			}
 			ctx.SetStatusCode(fasthttp.StatusNoContent)
 			return
 		}

@@ -101,15 +101,17 @@ type WebhookRequest struct {
 
 // WebhookResponse represents the API response for a webhook
 type WebhookResponse struct {
-	ID        uuid.UUID         `json:"id"`
-	Name      string            `json:"name"`
-	URL       string            `json:"url"`
-	Events    []string          `json:"events"`
-	Headers   map[string]string `json:"headers"`
-	IsActive  bool              `json:"is_active"`
-	HasSecret bool              `json:"has_secret"`
-	CreatedAt string            `json:"created_at"`
-	UpdatedAt string            `json:"updated_at"`
+	ID            uuid.UUID         `json:"id"`
+	Name          string            `json:"name"`
+	URL           string            `json:"url"`
+	Events        []string          `json:"events"`
+	Headers       map[string]string `json:"headers"`
+	IsActive      bool              `json:"is_active"`
+	HasSecret     bool              `json:"has_secret"`
+	FailedCount   int64             `json:"failed_count"`
+	RetryingCount int64             `json:"retrying_count"`
+	CreatedAt     string            `json:"created_at"`
+	UpdatedAt     string            `json:"updated_at"`
 }
 
 // AvailableWebhookEvents returns the list of available webhook event types
@@ -150,9 +152,34 @@ func (a *App) ListWebhooks(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list webhooks", nil, "")
 	}
 
+	failedCounts := map[uuid.UUID]int64{}
+	retryingCounts := map[uuid.UUID]int64{}
+	var rows []struct {
+		WebhookID uuid.UUID `gorm:"column:webhook_id"`
+		Count     int64     `gorm:"column:count"`
+	}
+	if err := a.DB.Model(&models.WebhookDelivery{}).
+		Select("webhook_id, COUNT(*) as count").
+		Where("organization_id = ? AND status = ?", orgID, "failed").
+		Group("webhook_id").
+		Scan(&rows).Error; err == nil {
+		for _, row := range rows {
+			failedCounts[row.WebhookID] = row.Count
+		}
+	}
+	if err := a.DB.Model(&models.WebhookDelivery{}).
+		Select("webhook_id, COUNT(*) as count").
+		Where("organization_id = ? AND status IN ? AND last_error <> ''", orgID, []string{"pending", "in_progress"}).
+		Group("webhook_id").
+		Scan(&rows).Error; err == nil {
+		for _, row := range rows {
+			retryingCounts[row.WebhookID] = row.Count
+		}
+	}
+
 	result := make([]WebhookResponse, len(webhooks))
 	for i, wh := range webhooks {
-		result[i] = webhookToResponse(wh)
+		result[i] = webhookToResponse(wh, failedCounts[wh.ID], retryingCounts[wh.ID])
 	}
 
 	return r.SendEnvelope(map[string]any{
@@ -181,7 +208,16 @@ func (a *App) GetWebhook(r *fastglue.Request) error {
 		return nil
 	}
 
-	return r.SendEnvelope(webhookToResponse(*webhook))
+	var failedCount int64
+	_ = a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status = ?", orgID, webhookID, "failed").
+		Count(&failedCount).Error
+	var retryingCount int64
+	_ = a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND status IN ? AND last_error <> ''", orgID, webhookID, []string{"pending", "in_progress"}).
+		Count(&retryingCount).Error
+
+	return r.SendEnvelope(webhookToResponse(*webhook, failedCount, retryingCount))
 }
 
 // CreateWebhook creates a new webhook
@@ -241,7 +277,7 @@ func (a *App) CreateWebhook(r *fastglue.Request) error {
 	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
 		"webhook", webhook.ID, models.AuditActionCreated, nil, webhookAuditSnapshot(&webhook))
 
-	return r.SendEnvelope(webhookToResponse(webhook))
+	return r.SendEnvelope(webhookToResponse(webhook, 0, 0))
 }
 
 // UpdateWebhook updates an existing webhook
@@ -308,7 +344,7 @@ func (a *App) UpdateWebhook(r *fastglue.Request) error {
 	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
 		"webhook", webhook.ID, models.AuditActionUpdated, oldSnap, webhookAuditSnapshot(webhook))
 
-	return r.SendEnvelope(webhookToResponse(*webhook))
+	return r.SendEnvelope(webhookToResponse(*webhook, 0, 0))
 }
 
 // DeleteWebhook deletes a webhook
@@ -367,9 +403,10 @@ func (a *App) TestWebhook(r *fastglue.Request) error {
 	}
 
 	payload := OutboundWebhookPayload{
-		Event:     "test",
-		Timestamp: time.Now().UTC(),
-		Data:      testData,
+		DeliveryID: uuid.New().String(),
+		Event:      "test",
+		Timestamp:  time.Now().UTC(),
+		Data:       testData,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -382,7 +419,7 @@ func (a *App) TestWebhook(r *fastglue.Request) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := a.sendWebhookRequest(ctx, *webhook, jsonData); err != nil {
+	if err := a.sendWebhookRequest(ctx, webhook.URL, webhook.Headers, webhook.Secret, jsonData); err != nil {
 		a.Log.Error("Webhook test failed", "error", err, "webhook_id", webhook.ID)
 		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Webhook test failed", nil, "")
 	}
@@ -404,7 +441,45 @@ func webhookAuditSnapshot(wh *models.Webhook) map[string]any {
 	}
 }
 
-func webhookToResponse(wh models.Webhook) WebhookResponse {
+// RetryFailedWebhookDeliveries resets failed deliveries for a webhook
+func (a *App) RetryFailedWebhookDeliveries(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	webhookID, err := parsePathUUID(r, "id", "webhook")
+	if err != nil {
+		return nil
+	}
+
+	if _, err := findByIDAndOrg[models.Webhook](a.DB, r, webhookID, orgID, "Webhook"); err != nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	result := a.DB.Model(&models.WebhookDelivery{}).
+		Where("organization_id = ? AND webhook_id = ? AND (status = ? OR (status IN ? AND last_error <> ''))",
+			orgID, webhookID, "failed", []string{"pending", "in_progress"}).
+		Updates(map[string]interface{}{
+			"status":                "pending",
+			"next_attempt_at":       now,
+			"processing_started_at": nil,
+			"last_error":            "",
+			"last_status_code":      0,
+		})
+
+	if result.Error != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to retry webhook deliveries", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]any{
+		"message": "Retry scheduled",
+		"count":   result.RowsAffected,
+	})
+}
+
+func webhookToResponse(wh models.Webhook, failedCount int64, retryingCount int64) WebhookResponse {
 	// Convert events
 	events := make([]string, len(wh.Events))
 	copy(events, wh.Events)
@@ -418,14 +493,16 @@ func webhookToResponse(wh models.Webhook) WebhookResponse {
 	}
 
 	return WebhookResponse{
-		ID:        wh.ID,
-		Name:      wh.Name,
-		URL:       wh.URL,
-		Events:    events,
-		Headers:   headers,
-		IsActive:  wh.IsActive,
-		HasSecret: wh.Secret != "",
-		CreatedAt: wh.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: wh.UpdatedAt.Format(time.RFC3339),
+		ID:            wh.ID,
+		Name:          wh.Name,
+		URL:           wh.URL,
+		Events:        events,
+		Headers:       headers,
+		IsActive:      wh.IsActive,
+		HasSecret:     wh.Secret != "",
+		FailedCount:   failedCount,
+		RetryingCount: retryingCount,
+		CreatedAt:     wh.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     wh.UpdatedAt.Format(time.RFC3339),
 	}
 }

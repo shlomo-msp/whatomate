@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from 'vue-sonner'
 import { User, Eye, EyeOff, Loader2 } from 'lucide-vue-next'
 import { usersService } from '@/services/api'
@@ -16,14 +17,42 @@ import { getErrorMessage } from '@/lib/api-utils'
 const { t } = useI18n()
 const authStore = useAuthStore()
 const isChangingPassword = ref(false)
+const isSettingUpTwoFA = ref(false)
+const isVerifyingTwoFA = ref(false)
+const isDisablingTwoFA = ref(false)
+const isResettingTwoFA = ref(false)
 const showCurrentPassword = ref(false)
 const showNewPassword = ref(false)
 const showConfirmPassword = ref(false)
+const showDisablePassword = ref(false)
+const showResetPassword = ref(false)
+const setupDialogOpen = ref(false)
+const resetDialogOpen = ref(false)
+const disableDialogOpen = ref(false)
 
 const passwordForm = ref({
   current_password: '',
   new_password: '',
   confirm_password: ''
+})
+
+const twoFASetup = ref({
+  secret: '',
+  otpauth_url: '',
+  qr_code: '',
+  code: ''
+})
+
+const twoFADisable = ref({
+  current_password: ''
+})
+
+const twoFAReset = ref({
+  current_password: '',
+  secret: '',
+  otpauth_url: '',
+  qr_code: '',
+  code: ''
 })
 
 async function changePassword() {
@@ -56,6 +85,103 @@ async function changePassword() {
     toast.error(getErrorMessage(error, t('profile.passwordChangeFailed')))
   } finally {
     isChangingPassword.value = false
+  }
+}
+
+async function setupTwoFA() {
+  isSettingUpTwoFA.value = true
+  try {
+    const response = await usersService.setupTwoFA()
+    const data = response.data.data
+    twoFASetup.value.secret = data.secret
+    twoFASetup.value.otpauth_url = data.otpauth_url
+    twoFASetup.value.qr_code = data.qr_code
+    setupDialogOpen.value = true
+    toast.success('Scan the QR code and enter the verification code')
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to start 2FA setup'))
+  } finally {
+    isSettingUpTwoFA.value = false
+  }
+}
+
+async function verifyTwoFA() {
+  if (!twoFASetup.value.code) {
+    toast.error('Enter the verification code')
+    return
+  }
+
+  isVerifyingTwoFA.value = true
+  try {
+    await usersService.verifyTwoFA(twoFASetup.value.code)
+    toast.success('Two-factor authentication enabled')
+    setupDialogOpen.value = false
+    twoFASetup.value = { secret: '', otpauth_url: '', qr_code: '', code: '' }
+    await authStore.refreshUserData()
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to verify 2FA'))
+  } finally {
+    isVerifyingTwoFA.value = false
+  }
+}
+
+async function disableTwoFA() {
+  if (!twoFADisable.value.current_password) {
+    toast.error('Enter your current password')
+    return
+  }
+
+  isDisablingTwoFA.value = true
+  try {
+    await usersService.disableTwoFA(twoFADisable.value.current_password)
+    toast.success('Two-factor authentication disabled')
+    twoFADisable.value = { current_password: '' }
+    disableDialogOpen.value = false
+    await authStore.refreshUserData()
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to disable 2FA'))
+  } finally {
+    isDisablingTwoFA.value = false
+  }
+}
+
+async function resetTwoFA() {
+  if (!twoFAReset.value.current_password) {
+    toast.error('Enter your current password')
+    return
+  }
+
+  isResettingTwoFA.value = true
+  try {
+    const response = await usersService.resetTwoFA(twoFAReset.value.current_password)
+    const data = response.data.data
+    twoFAReset.value.secret = data.secret
+    twoFAReset.value.otpauth_url = data.otpauth_url
+    twoFAReset.value.qr_code = data.qr_code
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to reset 2FA'))
+  } finally {
+    isResettingTwoFA.value = false
+  }
+}
+
+async function verifyResetTwoFA() {
+  if (!twoFAReset.value.code) {
+    toast.error('Enter the verification code')
+    return
+  }
+
+  isVerifyingTwoFA.value = true
+  try {
+    await usersService.verifyTwoFA(twoFAReset.value.code)
+    toast.success('Two-factor authentication reset')
+    resetDialogOpen.value = false
+    twoFAReset.value = { current_password: '', secret: '', otpauth_url: '', qr_code: '', code: '' }
+    await authStore.refreshUserData()
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to verify 2FA'))
+  } finally {
+    isVerifyingTwoFA.value = false
   }
 }
 </script>
@@ -169,7 +295,142 @@ async function changePassword() {
             </div>
           </CardContent>
         </Card>
+
+        <!-- Two-Factor Authentication -->
+        <Card>
+          <CardHeader>
+            <CardTitle>Two-Factor Authentication</CardTitle>
+            <CardDescription>
+              Add an extra layer of security to your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="flex items-center justify-between">
+              <p class="text-sm text-muted-foreground">
+                Status: <span class="font-medium text-foreground">{{ authStore.user?.totp_enabled ? 'Enabled' : 'Disabled' }}</span>
+              </p>
+              <div class="flex items-center gap-2">
+                <Button v-if="!authStore.user?.totp_enabled" variant="outline" size="sm" @click="setupTwoFA" :disabled="isSettingUpTwoFA">
+                  <Loader2 v-if="isSettingUpTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+                  Set up 2FA
+                </Button>
+                <template v-else>
+                  <Button variant="outline" size="sm" @click="resetDialogOpen = true">Reset 2FA</Button>
+                  <Button variant="outline" size="sm" @click="disableDialogOpen = true">Disable 2FA</Button>
+                </template>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </ScrollArea>
   </div>
+
+  <Dialog v-model:open="setupDialogOpen">
+    <DialogContent class="sm:max-w-[480px]">
+      <form @submit.prevent="verifyTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Scan the QR code and enter the verification code.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3">
+          <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
+            <img :src="twoFASetup.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
+            <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+          </div>
+          <div class="space-y-1">
+            <Label>Manual entry key</Label>
+            <Input :model-value="twoFASetup.secret" readonly />
+          </div>
+          <div class="space-y-1">
+            <Label for="twofa_code">Verification Code</Label>
+            <Input id="twofa_code" v-model="twoFASetup.code" type="text" placeholder="123456" autocomplete="one-time-code" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="setupDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isVerifyingTwoFA">
+            <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Enable 2FA
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="resetDialogOpen">
+    <DialogContent class="sm:max-w-[480px]">
+      <form @submit.prevent="verifyResetTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Reset Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Verify your password, then scan the new QR code.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3">
+          <div class="space-y-2">
+            <Label for="reset_password">Current Password</Label>
+            <div class="relative">
+              <Input id="reset_password" v-model="twoFAReset.current_password" :type="showResetPassword ? 'text' : 'password'" placeholder="Enter current password" />
+              <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showResetPassword = !showResetPassword">
+                <Eye v-if="!showResetPassword" class="h-4 w-4" />
+                <EyeOff v-else class="h-4 w-4" />
+              </button>
+            </div>
+            <Button variant="outline" size="sm" @click="resetTwoFA" :disabled="isResettingTwoFA">
+              <Loader2 v-if="isResettingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+              Generate New QR Code
+            </Button>
+          </div>
+          <div v-if="twoFAReset.qr_code" class="space-y-2">
+            <div class="rounded-lg border p-4 flex flex-col items-center gap-2">
+              <img :src="twoFAReset.qr_code" alt="TOTP QR Code" class="h-40 w-40" />
+              <p class="text-xs text-muted-foreground">Scan with your authenticator app</p>
+            </div>
+            <div class="space-y-1">
+              <Label>Manual entry key</Label>
+              <Input :model-value="twoFAReset.secret" readonly />
+            </div>
+            <div class="space-y-1">
+              <Label for="reset_code">Verification Code</Label>
+              <Input id="reset_code" v-model="twoFAReset.code" type="text" placeholder="123456" autocomplete="one-time-code" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="resetDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isVerifyingTwoFA || !twoFAReset.qr_code">
+            <Loader2 v-if="isVerifyingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Verify & Save
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="disableDialogOpen">
+    <DialogContent class="sm:max-w-[420px]">
+      <form @submit.prevent="disableTwoFA" class="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
+          <DialogDescription>Enter your password to disable 2FA.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2">
+          <Label for="disable_password">Current Password</Label>
+          <div class="relative">
+            <Input id="disable_password" v-model="twoFADisable.current_password" :type="showDisablePassword ? 'text' : 'password'" placeholder="Enter current password" />
+            <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="showDisablePassword = !showDisablePassword">
+              <Eye v-if="!showDisablePassword" class="h-4 w-4" />
+              <EyeOff v-else class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="disableDialogOpen = false">Cancel</Button>
+          <Button variant="outline" type="submit" :disabled="isDisablingTwoFA">
+            <Loader2 v-if="isDisablingTwoFA" class="mr-2 h-4 w-4 animate-spin" />
+            Disable 2FA
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>
 </template>

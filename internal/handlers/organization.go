@@ -39,14 +39,17 @@ func callingSettingsSnapshot(settings models.JSONB) map[string]any {
 
 // OrganizationSettings represents the settings structure
 type OrganizationSettings struct {
-	MaskPhoneNumbers    bool   `json:"mask_phone_numbers"`
-	Timezone            string `json:"timezone"`
-	DateFormat          string `json:"date_format"`
-	CallingEnabled      bool   `json:"calling_enabled"`
-	MaxCallDuration     int    `json:"max_call_duration"`
-	TransferTimeoutSecs int    `json:"transfer_timeout_secs"`
-	HoldMusicFile       string `json:"hold_music_file"`
-	RingbackFile        string `json:"ringback_file"`
+	MaskPhoneNumbers       bool   `json:"mask_phone_numbers"`
+	Timezone               string `json:"timezone"`
+	DateFormat             string `json:"date_format"`
+	AutoDeleteMediaEnabled bool   `json:"auto_delete_media_enabled"`
+	AutoDeleteMediaDays    int    `json:"auto_delete_media_days"`
+	RequireTwoFA           bool   `json:"require_2fa"`
+	CallingEnabled         bool   `json:"calling_enabled"`
+	MaxCallDuration        int    `json:"max_call_duration"`
+	TransferTimeoutSecs    int    `json:"transfer_timeout_secs"`
+	HoldMusicFile          string `json:"hold_music_file"`
+	RingbackFile           string `json:"ringback_file"`
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -63,14 +66,17 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 
 	// Parse settings from JSONB
 	settings := OrganizationSettings{
-		MaskPhoneNumbers:    false,
-		Timezone:            "UTC",
-		DateFormat:          "YYYY-MM-DD",
-		CallingEnabled:      false,
-		MaxCallDuration:     callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600),
-		TransferTimeoutSecs: callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60),
-		HoldMusicFile:       a.Config.Calling.HoldMusicFile,
-		RingbackFile:        a.Config.Calling.RingbackFile,
+		MaskPhoneNumbers:       false,
+		Timezone:               "UTC",
+		DateFormat:             "YYYY-MM-DD",
+		AutoDeleteMediaEnabled: false,
+		AutoDeleteMediaDays:    30,
+		RequireTwoFA:           false,
+		CallingEnabled:         false,
+		MaxCallDuration:        callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600),
+		TransferTimeoutSecs:    callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60),
+		HoldMusicFile:          a.Config.Calling.HoldMusicFile,
+		RingbackFile:           a.Config.Calling.RingbackFile,
 	}
 
 	if org.Settings != nil {
@@ -82,6 +88,15 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		}
 		if v, ok := org.Settings["date_format"].(string); ok && v != "" {
 			settings.DateFormat = v
+		}
+		if v, ok := org.Settings["auto_delete_media_enabled"].(bool); ok {
+			settings.AutoDeleteMediaEnabled = v
+		}
+		if v, ok := org.Settings["auto_delete_media_days"].(float64); ok && v > 0 {
+			settings.AutoDeleteMediaDays = int(v)
+		}
+		if v, ok := org.Settings["require_2fa"].(bool); ok {
+			settings.RequireTwoFA = v
 		}
 		if v, ok := org.Settings["calling_enabled"].(bool); ok {
 			settings.CallingEnabled = v
@@ -114,15 +129,18 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		MaskPhoneNumbers    *bool   `json:"mask_phone_numbers"`
-		Timezone            *string `json:"timezone"`
-		DateFormat          *string `json:"date_format"`
-		Name                *string `json:"name"`
-		CallingEnabled      *bool   `json:"calling_enabled"`
-		MaxCallDuration     *int    `json:"max_call_duration"`
-		TransferTimeoutSecs *int    `json:"transfer_timeout_secs"`
-		HoldMusicFile       *string `json:"hold_music_file"`
-		RingbackFile        *string `json:"ringback_file"`
+		MaskPhoneNumbers       *bool   `json:"mask_phone_numbers"`
+		Timezone               *string `json:"timezone"`
+		DateFormat             *string `json:"date_format"`
+		AutoDeleteMediaEnabled *bool   `json:"auto_delete_media_enabled"`
+		AutoDeleteMediaDays    *int    `json:"auto_delete_media_days"`
+		RequireTwoFA           *bool   `json:"require_2fa"`
+		Name                   *string `json:"name"`
+		CallingEnabled         *bool   `json:"calling_enabled"`
+		MaxCallDuration        *int    `json:"max_call_duration"`
+		TransferTimeoutSecs    *int    `json:"transfer_timeout_secs"`
+		HoldMusicFile          *string `json:"hold_music_file"`
+		RingbackFile           *string `json:"ringback_file"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -155,6 +173,15 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.DateFormat != nil {
 		org.Settings["date_format"] = *req.DateFormat
+	}
+	if req.AutoDeleteMediaEnabled != nil {
+		org.Settings["auto_delete_media_enabled"] = *req.AutoDeleteMediaEnabled
+	}
+	if req.AutoDeleteMediaDays != nil && *req.AutoDeleteMediaDays > 0 {
+		org.Settings["auto_delete_media_days"] = *req.AutoDeleteMediaDays
+	}
+	if req.RequireTwoFA != nil {
+		org.Settings["require_2fa"] = *req.RequireTwoFA
 	}
 	if req.CallingEnabled != nil {
 		org.Settings["calling_enabled"] = *req.CallingEnabled
@@ -199,6 +226,111 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 
 	return r.SendEnvelope(map[string]any{
 		"message": "Settings updated successfully",
+	})
+}
+
+// CreateOrganizationRequest represents the request body for creating an organization
+type CreateOrganizationRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateOrganization creates a new organization
+func (a *App) CreateOrganization(r *fastglue.Request) error {
+	_, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	if err := a.requirePermission(r, userID, models.ResourceOrganizations, models.ActionWrite); err != nil {
+		return nil
+	}
+
+	var req CreateOrganizationRequest
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
+	}
+
+	if req.Name == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Organization name is required", nil, "")
+	}
+
+	// Start transaction
+	tx := a.DB.Begin()
+	if tx.Error != nil {
+		a.Log.Error("Failed to begin transaction", "error", tx.Error)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	org := models.Organization{
+		Name:     req.Name,
+		Slug:     generateSlug(req.Name),
+		Settings: models.JSONB{},
+	}
+
+	if err := tx.Create(&org).Error; err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to create organization", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	// Seed system roles for the new organization
+	if err := database.SeedSystemRolesForOrg(tx, org.ID); err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to seed system roles", "error", err, "org_id", org.ID)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	// Create default chatbot settings
+	chatbotSettings := models.ChatbotSettings{
+		OrganizationID:     org.ID,
+		IsEnabled:          false,
+		SessionTimeoutMins: 30,
+	}
+	if err := tx.Create(&chatbotSettings).Error; err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to create chatbot settings", "error", err, "org_id", org.ID)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	// Get admin role for this org and add the creator as admin
+	var adminRole models.CustomRole
+	if err := tx.Where("organization_id = ? AND name = ? AND is_system = ?", org.ID, "admin", true).First(&adminRole).Error; err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to find admin role", "error", err, "org_id", org.ID)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	userOrg := models.UserOrganization{
+		UserID:         userID,
+		OrganizationID: org.ID,
+		RoleID:         &adminRole.ID,
+		IsDefault:      false,
+	}
+	if err := tx.Create(&userOrg).Error; err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to add creator to organization", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	// Seed default dashboard widgets for the new organization
+	if err := database.SeedDefaultWidgetsForOrg(tx, org.ID, userID); err != nil {
+		tx.Rollback()
+		a.Log.Error("Failed to seed default widgets", "error", err, "org_id", org.ID)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		a.Log.Error("Failed to commit transaction", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
+	}
+
+	a.Log.Info("Created organization", "org_id", org.ID, "org_name", org.Name, "created_by", userID)
+
+	return r.SendEnvelope(OrganizationResponse{
+		ID:        org.ID,
+		Name:      org.Name,
+		Slug:      org.Slug,
+		CreatedAt: org.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
 
@@ -333,111 +465,6 @@ func (a *App) GetCurrentOrganization(r *fastglue.Request) error {
 	if err := a.DB.Where("id = ?", orgID).First(&org).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Organization not found", nil, "")
 	}
-
-	return r.SendEnvelope(OrganizationResponse{
-		ID:        org.ID,
-		Name:      org.Name,
-		Slug:      org.Slug,
-		CreatedAt: org.CreatedAt.Format("2006-01-02T15:04:05Z"),
-	})
-}
-
-// CreateOrganizationRequest represents the request body for creating an organization
-type CreateOrganizationRequest struct {
-	Name string `json:"name"`
-}
-
-// CreateOrganization creates a new organization
-func (a *App) CreateOrganization(r *fastglue.Request) error {
-	_, userID, err := a.getOrgAndUserID(r)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
-	}
-
-	if err := a.requirePermission(r, userID, models.ResourceOrganizations, models.ActionWrite); err != nil {
-		return nil
-	}
-
-	var req CreateOrganizationRequest
-	if err := a.decodeRequest(r, &req); err != nil {
-		return nil
-	}
-
-	if req.Name == "" {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Organization name is required", nil, "")
-	}
-
-	// Start transaction
-	tx := a.DB.Begin()
-	if tx.Error != nil {
-		a.Log.Error("Failed to begin transaction", "error", tx.Error)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	org := models.Organization{
-		Name:     req.Name,
-		Slug:     generateSlug(req.Name),
-		Settings: models.JSONB{},
-	}
-
-	if err := tx.Create(&org).Error; err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to create organization", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	// Seed system roles for the new organization
-	if err := database.SeedSystemRolesForOrg(tx, org.ID); err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to seed system roles", "error", err, "org_id", org.ID)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	// Create default chatbot settings
-	chatbotSettings := models.ChatbotSettings{
-		OrganizationID:     org.ID,
-		IsEnabled:          false,
-		SessionTimeoutMins: 30,
-	}
-	if err := tx.Create(&chatbotSettings).Error; err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to create chatbot settings", "error", err, "org_id", org.ID)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	// Get admin role for this org and add the creator as admin
-	var adminRole models.CustomRole
-	if err := tx.Where("organization_id = ? AND name = ? AND is_system = ?", org.ID, "admin", true).First(&adminRole).Error; err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to find admin role", "error", err, "org_id", org.ID)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	userOrg := models.UserOrganization{
-		UserID:         userID,
-		OrganizationID: org.ID,
-		RoleID:         &adminRole.ID,
-		IsDefault:      false,
-	}
-	if err := tx.Create(&userOrg).Error; err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to add creator to organization", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	// Seed default dashboard widgets for the new organization
-	if err := database.SeedDefaultWidgetsForOrg(tx, org.ID, userID); err != nil {
-		tx.Rollback()
-		a.Log.Error("Failed to seed default widgets", "error", err, "org_id", org.ID)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		a.Log.Error("Failed to commit transaction", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create organization", nil, "")
-	}
-
-	a.Log.Info("Created organization", "org_id", org.ID, "org_name", org.Name, "created_by", userID)
 
 	return r.SendEnvelope(OrganizationResponse{
 		ID:        org.ID,
@@ -674,4 +701,61 @@ func (a *App) UpdateOrganizationMemberRole(r *fastglue.Request) error {
 	a.InvalidateUserPermissionsCache(targetUserID)
 
 	return r.SendEnvelope(map[string]string{"message": "Member role updated successfully"})
+}
+
+// DeleteOrganization deletes an organization (super admin only)
+func (a *App) DeleteOrganization(r *fastglue.Request) error {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok || !a.IsSuperAdmin(userID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can delete organizations", nil, "")
+	}
+
+	id, err := parsePathUUID(r, "id", "organization")
+	if err != nil {
+		return nil
+	}
+
+	// Prevent deleting the current user's default organization
+	var userOrgID uuid.UUID
+	orgIDVal := r.RequestCtx.UserValue("organization_id")
+	switch v := orgIDVal.(type) {
+	case uuid.UUID:
+		userOrgID = v
+	case string:
+		parsed, parseErr := uuid.Parse(v)
+		if parseErr == nil {
+			userOrgID = parsed
+		}
+	}
+	if userOrgID != uuid.Nil && userOrgID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete your current organization", nil, "")
+	}
+
+	var orgCount int64
+	if err := a.DB.Model(&models.Organization{}).Count(&orgCount).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to count organizations", nil, "")
+	}
+	if orgCount <= 1 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the last organization", nil, "")
+	}
+
+	// Prevent deleting the first (default) organization
+	var firstOrg models.Organization
+	if err := a.DB.Order("created_at ASC").First(&firstOrg).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load default organization", nil, "")
+	}
+	if firstOrg.ID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the default organization", nil, "")
+	}
+
+	var org models.Organization
+	if err := a.DB.Where("id = ?", id).First(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Organization not found", nil, "")
+	}
+
+	if err := a.DB.Delete(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete organization", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]string{"message": "Organization deleted successfully"})
 }
