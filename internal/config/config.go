@@ -17,6 +17,7 @@ import (
 // Config holds all configuration for the application
 type Config struct {
 	App          AppConfig          `koanf:"app"`
+	Auth         AuthConfig         `koanf:"auth"`
 	Server       ServerConfig       `koanf:"server"`
 	Database     DatabaseConfig     `koanf:"database"`
 	Redis        RedisConfig        `koanf:"redis"`
@@ -98,10 +99,15 @@ type CallingConfig struct {
 }
 
 type AppConfig struct {
-	Name          string `koanf:"name"`
-	Environment   string `koanf:"environment"` // development, staging, production
-	Debug         bool   `koanf:"debug"`
-	EncryptionKey string `koanf:"encryption_key"` // AES-256 key for encrypting secrets at rest
+	Name                     string `koanf:"name"`
+	Environment              string `koanf:"environment"` // development, staging, production
+	Debug                    bool   `koanf:"debug"`
+	EncryptionKey            string `koanf:"encryption_key"`              // AES-256 key for encrypting secrets at rest
+	AllowInternalWebhookURLs bool   `koanf:"allow_internal_webhook_urls"` // Unsafe opt-in for private/internal webhook URLs
+}
+
+type AuthConfig struct {
+	PublicRegistrationEnabled bool `koanf:"public_registration_enabled"`
 }
 
 type ServerConfig struct {

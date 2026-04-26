@@ -156,7 +156,7 @@ func (a *App) CreateCustomAction(r *fastglue.Request) error {
 	}
 
 	// Validate config based on action type
-	if err := validateActionConfig(req.ActionType, req.Config); err != nil {
+	if err := validateActionConfig(req.ActionType, req.Config, a.Config.App.AllowInternalWebhookURLs); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
@@ -220,7 +220,7 @@ func (a *App) UpdateCustomAction(r *fastglue.Request) error {
 		if actionType == "" {
 			actionType = action.ActionType
 		}
-		if err := validateActionConfig(actionType, req.Config); err != nil {
+		if err := validateActionConfig(actionType, req.Config, a.Config.App.AllowInternalWebhookURLs); err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 		}
 		configJSON, _ := json.Marshal(req.Config)
@@ -632,7 +632,7 @@ func replaceVariables(template string, context map[string]any) string {
 }
 
 // validateActionConfig validates the config based on action type
-func validateActionConfig(actionType models.ActionType, config map[string]any) error {
+func validateActionConfig(actionType models.ActionType, config map[string]any, allowInternal bool) error {
 	switch actionType {
 	case models.ActionTypeWebhook:
 		urlVal, ok := config["url"]
@@ -640,7 +640,7 @@ func validateActionConfig(actionType models.ActionType, config map[string]any) e
 			return &ValidationError{Field: "config.url", Message: "URL is required for webhook actions"}
 		}
 		if urlStr, ok := urlVal.(string); ok {
-			if err := validateWebhookURL(urlStr); err != nil {
+			if err := validateWebhookURL(urlStr, allowInternal); err != nil {
 				return &ValidationError{Field: "config.url", Message: err.Error()}
 			}
 		}

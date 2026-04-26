@@ -191,7 +191,7 @@ func runServer(args []string) {
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			DialContext:         handlers.SSRFSafeDialer(),
+			DialContext:         handlers.SSRFSafeDialer(cfg.App.AllowInternalWebhookURLs),
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
