@@ -23,25 +23,25 @@ import (
 
 // CustomActionRequest represents the request body for creating/updating a custom action
 type CustomActionRequest struct {
-	Name         string                 `json:"name"`
-	Icon         string                 `json:"icon"`
-	ActionType   models.ActionType      `json:"action_type"` // webhook, url, javascript
-	Config       map[string]any `json:"config"`
-	IsActive     bool                   `json:"is_active"`
-	DisplayOrder int                    `json:"display_order"`
+	Name         string            `json:"name"`
+	Icon         string            `json:"icon"`
+	ActionType   models.ActionType `json:"action_type"` // webhook, url, javascript
+	Config       map[string]any    `json:"config"`
+	IsActive     bool              `json:"is_active"`
+	DisplayOrder int               `json:"display_order"`
 }
 
 // CustomActionResponse represents the API response for a custom action
 type CustomActionResponse struct {
-	ID           uuid.UUID              `json:"id"`
-	Name         string                 `json:"name"`
-	Icon         string                 `json:"icon"`
-	ActionType   models.ActionType      `json:"action_type"`
-	Config       map[string]any `json:"config"`
-	IsActive     bool                   `json:"is_active"`
-	DisplayOrder int                    `json:"display_order"`
-	CreatedAt    string                 `json:"created_at"`
-	UpdatedAt    string                 `json:"updated_at"`
+	ID           uuid.UUID         `json:"id"`
+	Name         string            `json:"name"`
+	Icon         string            `json:"icon"`
+	ActionType   models.ActionType `json:"action_type"`
+	Config       map[string]any    `json:"config"`
+	IsActive     bool              `json:"is_active"`
+	DisplayOrder int               `json:"display_order"`
+	CreatedAt    string            `json:"created_at"`
+	UpdatedAt    string            `json:"updated_at"`
 }
 
 // ExecuteActionRequest represents the request to execute a custom action
@@ -51,11 +51,11 @@ type ExecuteActionRequest struct {
 
 // ActionResult represents the result of executing a custom action
 type ActionResult struct {
-	Success     bool                   `json:"success"`
-	Message     string                 `json:"message,omitempty"`
-	RedirectURL string                 `json:"redirect_url,omitempty"`
-	Clipboard   string                 `json:"clipboard,omitempty"`
-	Toast       *ToastConfig           `json:"toast,omitempty"`
+	Success     bool           `json:"success"`
+	Message     string         `json:"message,omitempty"`
+	RedirectURL string         `json:"redirect_url,omitempty"`
+	Clipboard   string         `json:"clipboard,omitempty"`
+	Toast       *ToastConfig   `json:"toast,omitempty"`
 	Data        map[string]any `json:"data,omitempty"`
 }
 
@@ -161,7 +161,7 @@ func (a *App) CreateCustomAction(r *fastglue.Request) error {
 	}
 
 	// Validate config based on action type
-	if err := validateActionConfig(req.ActionType, req.Config); err != nil {
+	if err := validateActionConfig(req.ActionType, req.Config, a.Config.App.AllowInternalWebhookURLs); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
@@ -225,7 +225,7 @@ func (a *App) UpdateCustomAction(r *fastglue.Request) error {
 		if actionType == "" {
 			actionType = action.ActionType
 		}
-		if err := validateActionConfig(actionType, req.Config); err != nil {
+		if err := validateActionConfig(actionType, req.Config, a.Config.App.AllowInternalWebhookURLs); err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 		}
 		configJSON, _ := json.Marshal(req.Config)
@@ -637,7 +637,7 @@ func replaceVariables(template string, context map[string]any) string {
 }
 
 // validateActionConfig validates the config based on action type
-func validateActionConfig(actionType models.ActionType, config map[string]any) error {
+func validateActionConfig(actionType models.ActionType, config map[string]any, allowInternal bool) error {
 	switch actionType {
 	case models.ActionTypeWebhook:
 		urlVal, ok := config["url"]
@@ -645,7 +645,7 @@ func validateActionConfig(actionType models.ActionType, config map[string]any) e
 			return &ValidationError{Field: "config.url", Message: "URL is required for webhook actions"}
 		}
 		if urlStr, ok := urlVal.(string); ok {
-			if err := validateWebhookURL(urlStr); err != nil {
+			if err := validateWebhookURL(urlStr, allowInternal); err != nil {
 				return &ValidationError{Field: "config.url", Message: err.Error()}
 			}
 		}

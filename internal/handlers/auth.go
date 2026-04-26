@@ -108,6 +108,10 @@ func (a *App) Login(r *fastglue.Request) error {
 
 // Register creates a new user in an existing organization
 func (a *App) Register(r *fastglue.Request) error {
+	if !a.Config.Auth.PublicRegistrationEnabled {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Public registration is disabled", nil, "")
+	}
+
 	var req RegisterRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil

@@ -1,13 +1,15 @@
 services:
   # Whatomate app
   app:
-    image: shridh0r/whatomate:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: whatomate_app
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     networks:
       - whatomate
+    ports:
+      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -15,6 +17,9 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      WHATOMATE_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      WHATOMATE_REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - ./uploads:/app/uploads:rw
       - ./config.toml:/app/config.toml:ro
@@ -48,10 +53,11 @@ services:
     restart: unless-stopped
     networks:
       - whatomate
-    ports:
-      - "127.0.0.1:6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
