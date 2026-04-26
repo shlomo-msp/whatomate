@@ -25,13 +25,16 @@ func generalSettingsSnapshot(name string, settings models.JSONB) map[string]any 
 		}
 	}
 	return map[string]any{
-		"name":                name,
-		"timezone":            settings["timezone"],
-		"date_format":         settings["date_format"],
-		"mask_phone_numbers":  settings["mask_phone_numbers"],
-		"meta_app_id":         settings["meta_app_id"],
-		"meta_config_id":      settings["meta_config_id"],
-		"has_meta_app_secret": hasSecret,
+		"name":                      name,
+		"timezone":                  settings["timezone"],
+		"date_format":               settings["date_format"],
+		"mask_phone_numbers":        settings["mask_phone_numbers"],
+		"auto_delete_media_enabled": settings["auto_delete_media_enabled"],
+		"auto_delete_media_days":    settings["auto_delete_media_days"],
+		"require_2fa":               settings["require_2fa"],
+		"meta_app_id":               settings["meta_app_id"],
+		"meta_config_id":            settings["meta_config_id"],
+		"has_meta_app_secret":       hasSecret,
 	}
 }
 
@@ -49,17 +52,20 @@ func callingSettingsSnapshot(settings models.JSONB) map[string]any {
 
 // OrganizationSettings represents the settings structure
 type OrganizationSettings struct {
-	MaskPhoneNumbers    bool   `json:"mask_phone_numbers"`
-	Timezone            string `json:"timezone"`
-	DateFormat          string `json:"date_format"`
-	CallingEnabled      bool   `json:"calling_enabled"`
-	MaxCallDuration     int    `json:"max_call_duration"`
-	TransferTimeoutSecs int    `json:"transfer_timeout_secs"`
-	HoldMusicFile       string `json:"hold_music_file"`
-	RingbackFile        string `json:"ringback_file"`
-	MetaAppID           string `json:"meta_app_id"`
-	MetaConfigID        string `json:"meta_config_id"`
-	HasMetaAppSecret    bool   `json:"has_meta_app_secret"`
+	MaskPhoneNumbers       bool   `json:"mask_phone_numbers"`
+	Timezone               string `json:"timezone"`
+	DateFormat             string `json:"date_format"`
+	AutoDeleteMediaEnabled bool   `json:"auto_delete_media_enabled"`
+	AutoDeleteMediaDays    int    `json:"auto_delete_media_days"`
+	RequireTwoFA           bool   `json:"require_2fa"`
+	CallingEnabled         bool   `json:"calling_enabled"`
+	MaxCallDuration        int    `json:"max_call_duration"`
+	TransferTimeoutSecs    int    `json:"transfer_timeout_secs"`
+	HoldMusicFile          string `json:"hold_music_file"`
+	RingbackFile           string `json:"ringback_file"`
+	MetaAppID              string `json:"meta_app_id"`
+	MetaConfigID           string `json:"meta_config_id"`
+	HasMetaAppSecret       bool   `json:"has_meta_app_secret"`
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -76,14 +82,17 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 
 	// Parse settings from JSONB
 	settings := OrganizationSettings{
-		MaskPhoneNumbers:    false,
-		Timezone:            "UTC",
-		DateFormat:          "YYYY-MM-DD",
-		CallingEnabled:      false,
-		MaxCallDuration:     callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600),
-		TransferTimeoutSecs: callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60),
-		HoldMusicFile:       a.Config.Calling.HoldMusicFile,
-		RingbackFile:        a.Config.Calling.RingbackFile,
+		MaskPhoneNumbers:       false,
+		Timezone:               "UTC",
+		DateFormat:             "YYYY-MM-DD",
+		AutoDeleteMediaEnabled: false,
+		AutoDeleteMediaDays:    30,
+		RequireTwoFA:           false,
+		CallingEnabled:         false,
+		MaxCallDuration:        callingConfigDefault(a.Config.Calling.MaxCallDuration, 3600),
+		TransferTimeoutSecs:    callingConfigDefault(a.Config.Calling.TransferTimeoutSecs, 60),
+		HoldMusicFile:          a.Config.Calling.HoldMusicFile,
+		RingbackFile:           a.Config.Calling.RingbackFile,
 	}
 
 	if org.Settings != nil {
@@ -95,6 +104,15 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		}
 		if v, ok := org.Settings["date_format"].(string); ok && v != "" {
 			settings.DateFormat = v
+		}
+		if v, ok := org.Settings["auto_delete_media_enabled"].(bool); ok {
+			settings.AutoDeleteMediaEnabled = v
+		}
+		if v, ok := org.Settings["auto_delete_media_days"].(float64); ok && v > 0 {
+			settings.AutoDeleteMediaDays = int(v)
+		}
+		if v, ok := org.Settings["require_2fa"].(bool); ok {
+			settings.RequireTwoFA = v
 		}
 		if v, ok := org.Settings["calling_enabled"].(bool); ok {
 			settings.CallingEnabled = v
@@ -136,18 +154,21 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		MaskPhoneNumbers    *bool   `json:"mask_phone_numbers"`
-		Timezone            *string `json:"timezone"`
-		DateFormat          *string `json:"date_format"`
-		Name                *string `json:"name"`
-		CallingEnabled      *bool   `json:"calling_enabled"`
-		MaxCallDuration     *int    `json:"max_call_duration"`
-		TransferTimeoutSecs *int    `json:"transfer_timeout_secs"`
-		HoldMusicFile       *string `json:"hold_music_file"`
-		RingbackFile        *string `json:"ringback_file"`
-		MetaAppID           *string `json:"meta_app_id"`
-		MetaConfigID        *string `json:"meta_config_id"`
-		MetaAppSecret       *string `json:"meta_app_secret"`
+		MaskPhoneNumbers       *bool   `json:"mask_phone_numbers"`
+		Timezone               *string `json:"timezone"`
+		DateFormat             *string `json:"date_format"`
+		AutoDeleteMediaEnabled *bool   `json:"auto_delete_media_enabled"`
+		AutoDeleteMediaDays    *int    `json:"auto_delete_media_days"`
+		RequireTwoFA           *bool   `json:"require_2fa"`
+		Name                   *string `json:"name"`
+		CallingEnabled         *bool   `json:"calling_enabled"`
+		MaxCallDuration        *int    `json:"max_call_duration"`
+		TransferTimeoutSecs    *int    `json:"transfer_timeout_secs"`
+		HoldMusicFile          *string `json:"hold_music_file"`
+		RingbackFile           *string `json:"ringback_file"`
+		MetaAppID              *string `json:"meta_app_id"`
+		MetaConfigID           *string `json:"meta_config_id"`
+		MetaAppSecret          *string `json:"meta_app_secret"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -172,7 +193,7 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	oldCalling := callingSettingsSnapshot(org.Settings)
 
 	// Track which tabs received updates so we only audit the relevant ones.
-	generalTouched := req.MaskPhoneNumbers != nil || req.Timezone != nil || req.DateFormat != nil || (req.Name != nil && *req.Name != "") || metaAppCredsTouched
+	generalTouched := req.MaskPhoneNumbers != nil || req.Timezone != nil || req.DateFormat != nil || req.AutoDeleteMediaEnabled != nil || req.AutoDeleteMediaDays != nil || req.RequireTwoFA != nil || (req.Name != nil && *req.Name != "") || metaAppCredsTouched
 	callingTouched := req.CallingEnabled != nil || req.MaxCallDuration != nil || req.TransferTimeoutSecs != nil || req.HoldMusicFile != nil || req.RingbackFile != nil
 
 	// Update settings
@@ -188,6 +209,15 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.DateFormat != nil {
 		org.Settings["date_format"] = *req.DateFormat
+	}
+	if req.AutoDeleteMediaEnabled != nil {
+		org.Settings["auto_delete_media_enabled"] = *req.AutoDeleteMediaEnabled
+	}
+	if req.AutoDeleteMediaDays != nil && *req.AutoDeleteMediaDays > 0 {
+		org.Settings["auto_delete_media_days"] = *req.AutoDeleteMediaDays
+	}
+	if req.RequireTwoFA != nil {
+		org.Settings["require_2fa"] = *req.RequireTwoFA
 	}
 	if req.CallingEnabled != nil {
 		org.Settings["calling_enabled"] = *req.CallingEnabled
@@ -696,4 +726,61 @@ func (a *App) UpdateOrganizationMemberRole(r *fastglue.Request) error {
 	a.InvalidateUserPermissionsCache(targetUserID)
 
 	return r.SendEnvelope(map[string]string{"message": "Member role updated successfully"})
+}
+
+// DeleteOrganization deletes an organization (super admin only)
+func (a *App) DeleteOrganization(r *fastglue.Request) error {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok || !a.IsSuperAdmin(userID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can delete organizations", nil, "")
+	}
+
+	id, err := parsePathUUID(r, "id", "organization")
+	if err != nil {
+		return nil
+	}
+
+	// Prevent deleting the current user's default organization
+	var userOrgID uuid.UUID
+	orgIDVal := r.RequestCtx.UserValue("organization_id")
+	switch v := orgIDVal.(type) {
+	case uuid.UUID:
+		userOrgID = v
+	case string:
+		parsed, parseErr := uuid.Parse(v)
+		if parseErr == nil {
+			userOrgID = parsed
+		}
+	}
+	if userOrgID != uuid.Nil && userOrgID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete your current organization", nil, "")
+	}
+
+	var orgCount int64
+	if err := a.DB.Model(&models.Organization{}).Count(&orgCount).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to count organizations", nil, "")
+	}
+	if orgCount <= 1 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the last organization", nil, "")
+	}
+
+	// Prevent deleting the first (default) organization
+	var firstOrg models.Organization
+	if err := a.DB.Order("created_at ASC").First(&firstOrg).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load default organization", nil, "")
+	}
+	if firstOrg.ID == id {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot delete the default organization", nil, "")
+	}
+
+	var org models.Organization
+	if err := a.DB.Where("id = ?", id).First(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Organization not found", nil, "")
+	}
+
+	if err := a.DB.Delete(&org).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete organization", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]string{"message": "Organization deleted successfully"})
 }

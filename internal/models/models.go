@@ -115,6 +115,10 @@ type User struct {
 	IsActive       bool       `gorm:"default:true" json:"is_active"`
 	IsAvailable    bool       `gorm:"default:true" json:"is_available"`    // Agent availability status (away/available)
 	IsSuperAdmin   bool       `gorm:"default:false" json:"is_super_admin"` // Super admin can access all organizations
+	TOTPSecret     string     `gorm:"type:text" json:"-"`                  // TOTP secret (base32)
+	TOTPEnabled    bool       `gorm:"default:false" json:"totp_enabled"`   // TOTP enabled for user
+	TOTPLastUsedAt *time.Time `json:"-"`
+	TOTPRequired   bool       `gorm:"default:false" json:"totp_required"` // TOTP required for user
 
 	// SSO fields
 	SSOProvider   string `gorm:"size:50" json:"sso_provider,omitempty"`     // google, microsoft, github, facebook, custom
@@ -270,6 +274,34 @@ func (Webhook) TableName() string {
 	return "webhooks"
 }
 
+// WebhookDelivery represents an outbound webhook delivery attempt
+type WebhookDelivery struct {
+	BaseModel
+	OrganizationID      uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WebhookID           uuid.UUID  `gorm:"type:uuid;index;not null" json:"webhook_id"`
+	Event               string     `gorm:"size:100;not null" json:"event"`
+	URL                 string     `gorm:"type:text;not null" json:"url"`
+	Headers             JSONB      `gorm:"type:jsonb;default:'{}'" json:"headers"`
+	Secret              string     `gorm:"type:text" json:"secret"`
+	Payload             JSONB      `gorm:"type:jsonb;default:'{}'" json:"payload"`
+	Status              string     `gorm:"size:20;default:'pending'" json:"status"`
+	Attempts            int        `gorm:"default:0" json:"attempts"`
+	MaxAttempts         int        `gorm:"default:6" json:"max_attempts"`
+	NextAttemptAt       time.Time  `gorm:"index;not null" json:"next_attempt_at"`
+	ProcessingStartedAt *time.Time `json:"processing_started_at,omitempty"`
+	DeliveredAt         *time.Time `json:"delivered_at,omitempty"`
+	LastError           string     `gorm:"type:text" json:"last_error,omitempty"`
+	LastStatusCode      int        `json:"last_status_code,omitempty"`
+
+	// Relations
+	Webhook      *Webhook      `gorm:"foreignKey:WebhookID" json:"webhook,omitempty"`
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (WebhookDelivery) TableName() string {
+	return "webhook_deliveries"
+}
+
 // CustomAction represents a custom action button for chat integrations
 type CustomAction struct {
 	BaseModel
@@ -387,6 +419,7 @@ type Message struct {
 	Direction         Direction     `gorm:"size:10;not null" json:"direction"`
 	MessageType       MessageType   `gorm:"size:20;not null" json:"message_type"`
 	Content           string        `gorm:"type:text" json:"content"`
+	MediaID           string        `gorm:"size:255" json:"media_id"`
 	MediaURL          string        `gorm:"type:text" json:"media_url"`
 	MediaMimeType     string        `gorm:"size:100" json:"media_mime_type"`
 	MediaFilename     string        `gorm:"size:255" json:"media_filename"`
