@@ -948,6 +948,39 @@ func TestApp_SendMessage(t *testing.T) {
 		assert.Equal(t, models.MessageTypeText, resp.Data.MessageType)
 	})
 
+	t.Run("success - text message with documented text field", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"type": "text",
+			"text": "Hello from documented payload!",
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+		testutil.SetPathParam(req, "id", contact.ID.String())
+
+		err := app.SendMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data handlers.MessageResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		assert.Equal(t, contact.ID, resp.Data.ContactID)
+		assert.Equal(t, models.DirectionOutgoing, resp.Data.Direction)
+		assert.Equal(t, models.MessageTypeText, resp.Data.MessageType)
+		assert.Equal(t, map[string]interface{}{"body": "Hello from documented payload!"}, resp.Data.Content)
+	})
+
 	t.Run("invalid request body", func(t *testing.T) {
 		t.Parallel()
 		app := newTestApp(t)

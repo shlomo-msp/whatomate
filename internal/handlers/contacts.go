@@ -560,6 +560,7 @@ func (a *App) markMessagesAsRead(orgID uuid.UUID, contactID uuid.UUID, contact *
 // SendMessageRequest represents a send message request
 type SendMessageRequest struct {
 	Type    models.MessageType `json:"type"`
+	Text    string             `json:"text,omitempty"`
 	Content struct {
 		Body string `json:"body"`
 	} `json:"content"`
@@ -635,12 +636,17 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 		}
 	}
 
+	contentBody := req.Content.Body
+	if contentBody == "" {
+		contentBody = req.Text
+	}
+
 	// Build request and send using unified sender
 	msgReq := OutgoingMessageRequest{
 		Account:        account,
 		Contact:        &contact,
 		Type:           req.Type,
-		Content:        req.Content.Body,
+		Content:        contentBody,
 		ReplyToMessage: replyToMessage,
 	}
 
