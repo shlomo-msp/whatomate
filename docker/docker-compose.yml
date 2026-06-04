@@ -22,8 +22,8 @@ services:
       WHATOMATE_REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - ./uploads:/app/uploads:rw
+      - ./audio:/app/audio:rw
       - ./config.toml:/app/config.toml:ro
-    command: ["server", "-migrate", "-config", "/app/config.toml"]
 
   # PostgreSQL database
   db:
