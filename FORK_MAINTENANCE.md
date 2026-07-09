@@ -132,6 +132,18 @@ Keep support for both request shapes:
 { "type": "text", "content": { "body": "Hello" } }
 ```
 
+### Chatbot Auto Reply For Supported Inbound Types
+
+Reason: acknowledgement-style chatbot replies should fire for any supported
+incoming WhatsApp message, including media-only messages, not just text.
+
+Keep:
+- `chatbotInputForMessage` maps supported empty-content message types to a
+  stable chatbot input marker.
+- Unknown/unsupported Meta message types are skipped instead of auto-replied.
+- Stored message content remains the real incoming text/caption; synthetic
+  markers are only for chatbot routing/session history.
+
 ## Rebase Conflict Checks
 
 When conflicts happen, check these areas carefully:

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/config"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/shridarpatil/whatomate/test/testutil"
@@ -23,8 +24,22 @@ func newProcessorTestApp(t *testing.T) *App {
 	db := testutil.SetupTestDB(t)
 	log := testutil.NopLogger()
 
-	// Mock WhatsApp API server that accepts all requests.
-	waServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Mock WhatsApp API server that accepts message sends and media downloads.
+	var waServer *httptest.Server
+	waServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/media-download/test" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("test-media"))
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"url": waServer.URL + "/media-download/test",
+			})
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]string{{"id": "wamid.mock_" + uuid.New().String()[:8]}},
@@ -33,6 +48,7 @@ func newProcessorTestApp(t *testing.T) *App {
 	t.Cleanup(waServer.Close)
 
 	app := &App{
+		Config:     &config.Config{Storage: config.StorageConfig{LocalPath: t.TempDir()}},
 		DB:         db,
 		Log:        log,
 		WhatsApp:   whatsapp.NewWithBaseURL(log, waServer.URL),
@@ -415,6 +431,170 @@ func TestGetOrCreateSession_ExpiredSession(t *testing.T) {
 	assert.True(t, isNew)
 	require.NotNil(t, session)
 	assert.NotEqual(t, expired.ID, session.ID, "should create a new session, not return expired one")
+}
+
+// =============================================================================
+// chatbotInputForMessage
+// =============================================================================
+
+func TestChatbotInputForMessage_SupportedEmptyContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageType string
+		want        string
+	}{
+		{name: "text", messageType: "text", want: "[text]"},
+		{name: "image", messageType: "image", want: "[image]"},
+		{name: "video", messageType: "video", want: "[video]"},
+		{name: "audio", messageType: "audio", want: "[audio]"},
+		{name: "document", messageType: "document", want: "[document]"},
+		{name: "sticker", messageType: "sticker", want: "[sticker]"},
+		{name: "location", messageType: "location", want: "[location]"},
+		{name: "contacts", messageType: "contacts", want: "[contacts]"},
+		{name: "button reply", messageType: "button_reply", want: "[button_reply]"},
+		{name: "flow reply", messageType: "nfm_reply", want: "[nfm_reply]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := chatbotInputForMessage(tt.messageType, "")
+			assert.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestChatbotInputForMessage_TextContentTakesPrecedence(t *testing.T) {
+	got, ok := chatbotInputForMessage("image", "caption text")
+
+	assert.True(t, ok)
+	assert.Equal(t, "caption text", got)
+}
+
+func TestChatbotInputForMessage_UnsupportedType(t *testing.T) {
+	got, ok := chatbotInputForMessage("unsupported", "")
+
+	assert.False(t, ok)
+	assert.Empty(t, got)
+}
+
+// =============================================================================
+// processIncomingMessageFull
+// =============================================================================
+
+func TestProcessIncomingMessageFull_ImageWithoutCaptionSendsDefaultReply(t *testing.T) {
+	app := newProcessorTestApp(t)
+	if app.Redis == nil {
+		t.Skip("TEST_REDIS_URL not set, skipping cached processor test")
+	}
+	org, account := createProcessorTestOrg(t, app)
+
+	autoReply := "Your message was received and will be handled soon."
+	settings := &models.ChatbotSettings{
+		BaseModel:          models.BaseModel{ID: uuid.New()},
+		OrganizationID:     org.ID,
+		WhatsAppAccount:    account.Name,
+		IsEnabled:          true,
+		DefaultResponse:    autoReply,
+		GreetingButtons:    models.JSONBArray{},
+		FallbackButtons:    models.JSONBArray{},
+		SessionTimeoutMins: 30,
+	}
+	require.NoError(t, app.DB.Create(settings).Error)
+
+	incoming := IncomingTextMessage{
+		From:      "+15550001111",
+		ID:        "wamid.image_" + uuid.New().String()[:8],
+		Timestamp: "1234567890",
+		Type:      "image",
+		Image: &struct {
+			ID       string `json:"id"`
+			MimeType string `json:"mime_type"`
+			SHA256   string `json:"sha256"`
+			Caption  string `json:"caption,omitempty"`
+		}{
+			ID:       "media-" + uuid.New().String()[:8],
+			MimeType: "image/jpeg",
+			SHA256:   "sha256",
+		},
+	}
+
+	app.processIncomingMessageFull(account.PhoneID, incoming, "Media User")
+
+	var inbound models.Message
+	require.NoError(t, app.DB.
+		Where("organization_id = ? AND whats_app_message_id = ?", org.ID, incoming.ID).
+		First(&inbound).Error)
+	assert.Equal(t, models.DirectionIncoming, inbound.Direction)
+	assert.Equal(t, models.MessageTypeImage, inbound.MessageType)
+	assert.Empty(t, inbound.Content)
+	assert.NotEmpty(t, inbound.MediaURL)
+
+	var outgoing models.Message
+	require.NoError(t, app.DB.
+		Where("organization_id = ? AND direction = ? AND content = ?", org.ID, models.DirectionOutgoing, autoReply).
+		First(&outgoing).Error)
+	assert.Equal(t, models.MessageTypeText, outgoing.MessageType)
+	assert.Equal(t, models.MessageStatusSent, outgoing.Status)
+
+	var session models.ChatbotSession
+	require.NoError(t, app.DB.
+		Where("organization_id = ? AND phone_number = ?", org.ID, incoming.From).
+		First(&session).Error)
+
+	var sessionMsg models.ChatbotSessionMessage
+	require.NoError(t, app.DB.
+		Where("session_id = ? AND direction = ? AND message = ?", session.ID, models.DirectionIncoming, "[image]").
+		First(&sessionMsg).Error)
+	assert.Equal(t, "keyword_check", sessionMsg.StepName)
+}
+
+func TestProcessIncomingMessageFull_UnsupportedTypeDoesNotAutoReply(t *testing.T) {
+	app := newProcessorTestApp(t)
+	if app.Redis == nil {
+		t.Skip("TEST_REDIS_URL not set, skipping cached processor test")
+	}
+	org, account := createProcessorTestOrg(t, app)
+
+	settings := &models.ChatbotSettings{
+		BaseModel:          models.BaseModel{ID: uuid.New()},
+		OrganizationID:     org.ID,
+		WhatsAppAccount:    account.Name,
+		IsEnabled:          true,
+		DefaultResponse:    "Your message was received and will be handled soon.",
+		GreetingButtons:    models.JSONBArray{},
+		FallbackButtons:    models.JSONBArray{},
+		SessionTimeoutMins: 30,
+	}
+	require.NoError(t, app.DB.Create(settings).Error)
+
+	incoming := IncomingTextMessage{
+		From:      "+15550002222",
+		ID:        "wamid.unsupported_" + uuid.New().String()[:8],
+		Timestamp: "1234567890",
+		Type:      "unsupported",
+	}
+
+	app.processIncomingMessageFull(account.PhoneID, incoming, "Unsupported User")
+
+	var inbound models.Message
+	require.NoError(t, app.DB.
+		Where("organization_id = ? AND whats_app_message_id = ?", org.ID, incoming.ID).
+		First(&inbound).Error)
+	assert.Equal(t, models.DirectionIncoming, inbound.Direction)
+	assert.Equal(t, models.MessageType("unsupported"), inbound.MessageType)
+
+	var outgoingCount int64
+	require.NoError(t, app.DB.Model(&models.Message{}).
+		Where("organization_id = ? AND direction = ?", org.ID, models.DirectionOutgoing).
+		Count(&outgoingCount).Error)
+	assert.Zero(t, outgoingCount)
+
+	var sessionCount int64
+	require.NoError(t, app.DB.Model(&models.ChatbotSession{}).
+		Where("organization_id = ?", org.ID).
+		Count(&sessionCount).Error)
+	assert.Zero(t, sessionCount)
 }
 
 // =============================================================================

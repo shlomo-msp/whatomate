@@ -236,22 +236,22 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		}
 	}
 
-	// Only process text and interactive messages for chatbot
-	if messageText == "" {
-		a.Log.Debug("Skipping message with no text content for chatbot", "type", msg.Type)
+	chatbotInput, supportedForChatbot := chatbotInputForMessage(messageType, messageText)
+	if !supportedForChatbot {
+		a.Log.Debug("Skipping unsupported message type for chatbot", "type", msg.Type)
 		return
 	}
 
-	a.Log.Info("Processing message", "text", messageText, "buttonID", buttonID, "from", msg.From)
+	a.Log.Info("Processing message", "text", chatbotInput, "buttonID", buttonID, "from", msg.From)
 
 	// Get or create active session for this contact
 	session, isNewSession := a.getOrCreateSession(account.OrganizationID, contact.ID, account.Name, msg.From, settings.SessionTimeoutMins)
 
 	// Log incoming message to session
-	a.logSessionMessage(session.ID, models.DirectionIncoming, messageText, "keyword_check")
+	a.logSessionMessage(session.ID, models.DirectionIncoming, chatbotInput, "keyword_check")
 
 	// Check for transfer keyword BEFORE sending greeting (transfer takes priority)
-	keywordResponse, keywordMatched := a.matchKeywordRules(account.OrganizationID, account.Name, messageText)
+	keywordResponse, keywordMatched := a.matchKeywordRules(account.OrganizationID, account.Name, chatbotInput)
 	if keywordMatched && keywordResponse.ResponseType == models.ResponseTypeTransfer {
 		a.Log.Info("Transfer keyword matched", "response", keywordResponse.Body)
 		// Check business hours - if outside hours, send out of hours message instead
@@ -291,14 +291,14 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 			a.exitFlow(session)
 			return
 		}
-		if err := a.runChatGraph(account, contact, session, flow, messageText, buttonID, flowResponseData); err != nil {
+		if err := a.runChatGraph(account, contact, session, flow, chatbotInput, buttonID, flowResponseData); err != nil {
 			a.Log.Error("Chat graph runner failed", "error", err, "session", session.ID, "flow", flow.ID)
 		}
 		return
 	}
 
 	// Try to match flow trigger keywords first (before greeting to avoid duplicate messages)
-	if flow := a.matchFlowTrigger(account.OrganizationID, messageText); flow != nil {
+	if flow := a.matchFlowTrigger(account.OrganizationID, chatbotInput); flow != nil {
 		if flow.Graph == nil {
 			a.Log.Error("Triggered chatbot flow has no v2 graph; ignoring", "flow", flow.ID)
 			return
@@ -310,7 +310,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 			"_flow_id":   flow.ID.String(),
 			"_flow_name": flow.Name,
 		}
-		if err := a.runChatGraph(account, contact, session, flow, messageText, buttonID, flowResponseData); err != nil {
+		if err := a.runChatGraph(account, contact, session, flow, chatbotInput, buttonID, flowResponseData); err != nil {
 			a.Log.Error("Chat graph runner failed at flow start", "error", err, "session", session.ID, "flow", flow.ID)
 		}
 		return
@@ -366,7 +366,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	// If no keyword matched, try AI response if enabled
 	if settings.AI.Enabled && settings.AI.Provider != "" && settings.AI.APIKey != "" {
 		a.Log.Info("Attempting AI response", "provider", settings.AI.Provider, "model", settings.AI.Model)
-		aiResponse, err := a.generateAIResponse(settings, session, messageText)
+		aiResponse, err := a.generateAIResponse(settings, session, chatbotInput)
 		if err != nil {
 			a.Log.Error("AI response failed", "error", err, "provider", settings.AI.Provider, "model", settings.AI.Model)
 			// Fall through to default response
@@ -1388,6 +1388,33 @@ type ExtractedMessage struct {
 	Media            *MediaInfo
 	ButtonID         string         // used by chatbot routing only
 	FlowResponseData map[string]any // used by chatbot routing only
+}
+
+func chatbotInputForMessage(messageType, messageText string) (string, bool) {
+	if messageText != "" {
+		return messageText, true
+	}
+
+	switch messageType {
+	case
+		string(models.MessageTypeText),
+		string(models.MessageTypeImage),
+		string(models.MessageTypeVideo),
+		string(models.MessageTypeAudio),
+		string(models.MessageTypeDocument),
+		string(models.MessageTypeInteractive),
+		string(models.MessageTypeFlow),
+		string(models.MessageTypeLocation),
+		string(models.MessageTypeContact),
+		"button",
+		"button_reply",
+		"contacts",
+		"nfm_reply",
+		"sticker":
+		return "[" + messageType + "]", true
+	default:
+		return "", false
+	}
 }
 
 // extractMessageContent walks an IncomingTextMessage and returns the derived
