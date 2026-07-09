@@ -1,12 +1,11 @@
 name: Build develop image
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   develop-image:
+    if: github.repository == 'shridarpatil/whatomate'
     runs-on: ubuntu-latest
     permissions:
       contents: read

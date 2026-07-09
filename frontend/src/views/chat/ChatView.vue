@@ -1528,7 +1528,9 @@ function isMediaMessage(message: Message): boolean {
 function getMediaUrl(message: Message): string {
   if (!message.media_url) return ''
   const basePath = ((window as any).__BASE_PATH__ ?? '').replace(/\/$/, '')
-  return `${basePath}/api/media/${message.id}`
+  const selectedOrgId = localStorage.getItem('selected_organization_id')
+  const orgQuery = selectedOrgId ? `?organization_id=${encodeURIComponent(selectedOrgId)}` : ''
+  return `${basePath}/api/media/${message.id}${orgQuery}`
 }
 
 // Every media attachment in the open conversation, in chronological order, that

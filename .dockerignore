@@ -1,0 +1,32 @@
+.git
+.github
+.codex
+.agents
+
+# Local runtime/config files with secrets or generated state.
+**/.env
+**/config.toml
+uploads/
+audio/
+docker/uploads/
+docker/audio/
+
+# Local scratch and logs.
+temp/
+TEMP/
+tmp/
+logs/
+*.log
+
+# Frontend/build artifacts.
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+internal/frontend/dist/*
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

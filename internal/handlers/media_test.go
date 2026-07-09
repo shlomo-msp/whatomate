@@ -184,6 +184,28 @@ func TestApp_ServeMedia_CrossOrgIsolation(t *testing.T) {
 		"users from other orgs must not see another org's media")
 }
 
+// --- ServeMedia: super admin can use query org override for browser media tags ---
+
+func TestApp_ServeMedia_SuperAdminQueryOrgOverride(t *testing.T) {
+	app := newTestApp(t)
+	defaultOrg := testutil.CreateTestOrganization(t, app.DB)
+	targetOrg := testutil.CreateTestOrganization(t, app.DB)
+	superAdmin := testutil.CreateTestUser(t, app.DB, defaultOrg.ID, testutil.WithSuperAdmin())
+	contact := testutil.CreateTestContact(t, app.DB, targetOrg.ID)
+
+	rel := withStorageDir(t, app, "images/query-org.png", []byte("target-org media"))
+	msg := makeMediaMessage(t, app, targetOrg.ID, contact.ID, rel)
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, defaultOrg.ID, superAdmin.ID)
+	testutil.SetQueryParam(req, "organization_id", targetOrg.ID)
+	testutil.SetPathParam(req, "message_id", msg.ID.String())
+
+	require.NoError(t, app.ServeMedia(req))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, "target-org media", string(testutil.GetResponseBody(req)))
+}
+
 // --- ServeMedia: agent without contacts:read can read assigned contact's media ---
 
 func TestApp_ServeMedia_AgentCanReadAssignedContactMedia(t *testing.T) {

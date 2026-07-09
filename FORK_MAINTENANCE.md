@@ -50,6 +50,33 @@ Keep:
 - Docker startup must run `whatomate server -migrate -config ...` either through
   image `CMD` or a full compose command; do not override it with just `server`.
 
+### Local Secret And Runtime Ignore Rules
+
+Reason: production migration bundles, runtime media, generated frontend output,
+and local secrets should not be accidentally copied into Docker contexts or
+committed during fork maintenance.
+
+Keep:
+- Root `.dockerignore`.
+- Ignore rules for `.env`, `config.toml`, `uploads/`, `audio/`,
+  `docker/uploads/`, `docker/audio/`, scratch directories, logs,
+  `frontend/node_modules/`, `frontend/dist/`, Playwright reports/results, and
+  embedded frontend build output.
+
+### Fork-Safe GitHub Workflows
+
+Reason: this fork deploys from its own `main` branch, but should not
+automatically run upstream publish/release workflows or upstream image pushes.
+
+Keep:
+- `.github/workflows/deploy-docs.yml` is manual-only via `workflow_dispatch`.
+- `.github/workflows/develop-image.yml` is manual-only and guarded with
+  `github.repository == 'shridarpatil/whatomate'`.
+- `.github/workflows/e2e-tests.yml` is manual-only.
+- `.github/workflows/release.yml` is manual-only and guarded with
+  `github.repository == 'shridarpatil/whatomate'`.
+- `.github/workflows/test.yml` is manual-only.
+
 ### Public Registration Disabled By Default
 
 Reason: public deployments should not allow arbitrary organization/user signup.
@@ -144,6 +171,25 @@ Keep:
 - Stored message content remains the real incoming text/caption; synthetic
   markers are only for chatbot routing/session history.
 
+### Super-Admin Selected Organization For Browser Media And WebSocket
+
+Reason: Axios requests can send `X-Organization-ID`, but native browser media
+requests (`img`, `video`, `audio`, download links) cannot attach that custom
+header. WebSocket connections also authenticate after the upgrade with a
+short-lived token, so the token endpoint must honor the selected organization.
+
+Keep:
+- `frontend/src/views/chat/ChatView.vue` appends
+  `organization_id=<selected_organization_id>` to `/api/media/{message_id}`.
+- `internal/handlers/app.go` accepts `organization_id` as a GET-only fallback
+  in `getOrgID` when `X-Organization-ID` is absent.
+- The same existing org-switch checks still apply: super admins can access any
+  existing org, non-super-admin users only orgs where they have membership.
+- `internal/handlers/auth.go` uses `getOrgID` when generating
+  `/api/auth/ws-token` tokens, so real-time events bind to the selected org.
+- Regression tests in `internal/handlers/media_test.go` and
+  `internal/handlers/auth_gaps_test.go`.
+
 ## Rebase Conflict Checks
 
 When conflicts happen, check these areas carefully:
@@ -156,8 +202,17 @@ When conflicts happen, check these areas carefully:
   and fork fields such as TOTP, media ID, webhook delivery, and business calling.
 - `frontend/src/services/api.ts`: preserve upstream interactive flow support and
   fork voice-call/message compatibility typing.
+- `frontend/src/views/chat/ChatView.vue`: preserve selected-org media URLs for
+  browser-loaded media.
+- `internal/handlers/app.go`: preserve GET-only `organization_id` fallback in
+  `getOrgID` unless upstream has another safe browser-media org override.
+- `internal/handlers/auth.go`: preserve selected-org WebSocket token generation.
 - `docker/docker-compose.yml`: ensure local build still starts the correct app
   command and persists runtime paths.
+- `.github/workflows/*.yml`: keep fork publish/release/test automation manual or
+  upstream-repository guarded unless this fork intentionally enables CI.
+- `.dockerignore`: keep local secrets, runtime uploads/audio, scratch files, and
+  generated build/test artifacts out of Docker contexts.
 
 ## Validation Checklist
 
@@ -166,6 +221,12 @@ Run before pushing rebased `main`:
 ```bash
 go test ./...
 cd frontend && npm run build
+```
+
+For the selected-org media/WebSocket patch specifically:
+
+```bash
+go test ./internal/handlers -run "ServeMedia|GetWSToken"
 ```
 
 For deployment validation:

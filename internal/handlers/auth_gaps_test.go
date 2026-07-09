@@ -211,6 +211,37 @@ func TestApp_GetWSToken_Success(t *testing.T) {
 	assert.Greater(t, ttl, 25*time.Second, "WS token should be issued with ~30s TTL")
 }
 
+func TestApp_GetWSToken_UsesSelectedOrganizationHeader(t *testing.T) {
+	app := newTestApp(t)
+	defaultOrg := testutil.CreateTestOrganization(t, app.DB)
+	targetOrg := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, defaultOrg.ID, testutil.WithSuperAdmin())
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, defaultOrg.ID, user.ID)
+	testutil.SetHeader(req, "X-Organization-ID", targetOrg.ID.String())
+
+	require.NoError(t, app.GetWSToken(req))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	require.NotEmpty(t, resp.Data.Token)
+
+	parsed, err := jwt.ParseWithClaims(resp.Data.Token, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
+		return []byte(testutil.TestJWTSecret), nil
+	})
+	require.NoError(t, err)
+	claims, ok := parsed.Claims.(*middleware.JWTClaims)
+	require.True(t, ok)
+	assert.Equal(t, user.ID, claims.UserID)
+	assert.Equal(t, targetOrg.ID, claims.OrganizationID)
+}
+
 func TestApp_GetWSToken_MissingUserID(t *testing.T) {
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)

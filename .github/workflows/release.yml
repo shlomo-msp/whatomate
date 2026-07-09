@@ -1,12 +1,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   release:
+    if: github.repository == 'shridarpatil/whatomate'
     runs-on: ubuntu-latest
     permissions:
       contents: write

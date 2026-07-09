@@ -52,8 +52,11 @@ func (a *App) WaitForBackgroundTasks() {
 	a.wg.Wait()
 }
 
-// getOrgID extracts organization ID from request context (set by auth middleware)
-// Super admins can override the org by passing X-Organization-ID header
+// getOrgID extracts organization ID from request context (set by auth middleware).
+// Super admins can override the org by passing X-Organization-ID. GET requests
+// may also pass organization_id as a query parameter for browser subresources
+// such as images, video, audio, and WebSocket token requests that cannot attach
+// custom headers directly.
 // Super admins MUST select an organization - no "all organizations" view
 func (a *App) getOrgID(r *fastglue.Request) (uuid.UUID, error) {
 	// Get user's default organization ID from JWT
@@ -75,9 +78,14 @@ func (a *App) getOrgID(r *fastglue.Request) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("organization_id is not a valid UUID")
 	}
 
-	// Check for X-Organization-ID header to switch organizations
+	// Check for X-Organization-ID header to switch organizations. Native browser
+	// subresource requests cannot attach custom headers, so GET requests may use
+	// organization_id as a scoped fallback.
 	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 	overrideOrgID := string(r.RequestCtx.Request.Header.Peek("X-Organization-ID"))
+	if overrideOrgID == "" && string(r.RequestCtx.Method()) == fasthttp.MethodGet {
+		overrideOrgID = string(r.RequestCtx.QueryArgs().Peek("organization_id"))
+	}
 	if overrideOrgID != "" {
 		parsedOrgID, err := uuid.Parse(overrideOrgID)
 		if err == nil && parsedOrgID != defaultOrgID {
