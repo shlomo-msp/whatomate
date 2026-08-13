@@ -245,6 +245,31 @@ Keep:
 - `TestApp_SyncTemplates_FailsWhenLocalPersistenceFails` verifies the endpoint
   fails closed instead of returning a partial success.
 
+### Template Display Name Ownership
+
+Reason: Meta owns the technical template `name`, while `display_name` is a
+Whatomate-only friendly label used by operators. Meta template responses do not
+contain that local label, so synchronization must not overwrite it, and editing
+it must not trigger a provider review.
+
+Keep:
+- `SyncTemplates` initializes `display_name` from `name` for a new Meta import
+  but preserves the existing local value during later syncs.
+- `UpdateTemplate` changes an `APPROVED` or `REJECTED` template to `DRAFT` only
+  when a provider-owned field changes. A display-name-only or no-op save keeps
+  the current provider status.
+- `TestApp_SyncTemplates_PreservesExistingDisplayName` covers both the existing
+  label and new-import fallback behavior.
+- `TestApp_UpdateTemplate_DisplayNameOnlyPreservesStatus` is paired with the
+  existing approved/rejected content-edit tests so review-triggering changes
+  remain protected.
+
+Upstream watch: on every upstream sync, check whether upstream preserves local
+display names during template synchronization and excludes display-name-only
+updates from provider review transitions. If equivalent behavior and tests are
+present, incorporate the upstream implementation and drop this duplicate fork
+patch.
+
 ## Rebase Conflict Checks
 
 When conflicts happen, check these areas carefully:
@@ -262,6 +287,8 @@ When conflicts happen, check these areas carefully:
 - `internal/handlers/app.go`: preserve GET-only `organization_id` fallback in
   `getOrgID` unless upstream has another safe browser-media org override.
 - `internal/handlers/auth.go`: preserve selected-org WebSocket token generation.
+- `internal/handlers/templates.go`: preserve both fail-closed template sync and
+  the separation between Meta-owned template content and local display names.
 - `docker/docker-compose.yml`: ensure local build still starts the correct app
   command, persists runtime paths, and passes database/Redis credentials with
   the `WHATOMATE_<SECTION>__<KEY>` naming contract.
@@ -288,7 +315,7 @@ go test ./internal/handlers -run "ServeMedia|GetWSToken"
 For template-sync reconciliation integrity specifically:
 
 ```bash
-go test ./internal/handlers -run "TestApp_SyncTemplates_(Success|FailsWhenLocalPersistenceFails)"
+go test ./internal/handlers -run "TestApp_(SyncTemplates_(Success|FailsWhenLocalPersistenceFails|PreservesExistingDisplayName)|UpdateTemplate_(DisplayNameOnlyPreservesStatus|ApprovedToDraft|RejectedToDraft))"
 ```
 
 For deployment validation:

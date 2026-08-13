@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
@@ -246,11 +247,6 @@ func (a *App) UpdateTemplate(r *fastglue.Request) error {
 	// Capture old state for audit diff
 	oldTemplate := *template
 
-	// When editing approved or rejected templates, set to DRAFT to indicate local changes pending submission
-	if template.Status == "APPROVED" || template.Status == "REJECTED" {
-		template.Status = "DRAFT"
-	}
-
 	var req TemplateRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
@@ -306,6 +302,14 @@ func (a *App) UpdateTemplate(r *fastglue.Request) error {
 	template.AddSecurityRecommendation = req.AddSecurityRecommendation
 	template.CodeExpirationMinutes = req.CodeExpirationMinutes
 	template.UpdatedByID = &userID
+
+	// DisplayName is local presentation metadata and is never submitted to Meta.
+	// Only provider-owned changes require an approved/rejected template to be
+	// republished for review.
+	if (oldTemplate.Status == "APPROVED" || oldTemplate.Status == "REJECTED") &&
+		templateProviderContentChanged(oldTemplate, *template) {
+		template.Status = "DRAFT"
+	}
 
 	if err := a.DB.Save(template).Error; err != nil {
 		a.Log.Error("Failed to update template", "error", err)
@@ -539,11 +543,11 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 		lookup := a.DB.Unscoped().Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
 			orgID, account.Name, template.Name, template.Language).First(&existing)
 		if lookup.Error == nil {
-			// Update existing and restore if soft-deleted (explicitly set deleted_at to NULL)
+			// Update provider-owned fields and restore if soft-deleted. DisplayName
+			// is local metadata, so preserve the existing friendly label.
 			template.ID = existing.ID
 			updates := map[string]any{
 				"meta_template_id": template.MetaTemplateID,
-				"display_name":     template.DisplayName,
 				"category":         template.Category,
 				"status":           template.Status,
 				"header_type":      template.HeaderType,
@@ -638,6 +642,34 @@ func normalizeTemplateName(name string) string {
 		}
 	}
 	return result.String()
+}
+
+func templateProviderContentChanged(before, after models.Template) bool {
+	return before.Language != after.Language ||
+		before.Category != after.Category ||
+		normalizeTemplateHeaderType(before.HeaderType) != normalizeTemplateHeaderType(after.HeaderType) ||
+		before.HeaderContent != after.HeaderContent ||
+		before.BodyContent != after.BodyContent ||
+		before.FooterContent != after.FooterContent ||
+		!templateJSONBArrayEqual(before.Buttons, after.Buttons) ||
+		!templateJSONBArrayEqual(before.SampleValues, after.SampleValues) ||
+		before.AddSecurityRecommendation != after.AddSecurityRecommendation ||
+		before.CodeExpirationMinutes != after.CodeExpirationMinutes
+}
+
+func normalizeTemplateHeaderType(headerType string) string {
+	headerType = strings.ToUpper(strings.TrimSpace(headerType))
+	if headerType == "" {
+		return "NONE"
+	}
+	return headerType
+}
+
+func templateJSONBArrayEqual(before, after models.JSONBArray) bool {
+	if len(before) == 0 && len(after) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(before, after)
 }
 
 func convertToJSONBArray(arr []any) models.JSONBArray {

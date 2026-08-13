@@ -746,6 +746,61 @@ func TestApp_UpdateTemplate_Success(t *testing.T) {
 	assert.Equal(t, "es", resp.Data.Language)
 }
 
+func TestApp_UpdateTemplate_DisplayNameOnlyPreservesStatus(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		status string
+	}{
+		{name: "approved", status: "APPROVED"},
+		{name: "rejected", status: "REJECTED"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			app := newTestApp(t)
+			org := testutil.CreateTestOrganization(t, app.DB)
+			user := testutil.CreateTestUser(t, app.DB, org.ID)
+			account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+			tmpl := createTestTemplateInDB(t, app, org.ID, account.Name, "friendly_label", testCase.status)
+
+			// Match the template editor's full payload. Imported templates may
+			// store an empty header type while the editor sends the equivalent
+			// "NONE", and nil JSON arrays round-trip as empty arrays.
+			req := testutil.NewJSONRequest(t, map[string]any{
+				"whatsapp_account":            account.Name,
+				"name":                        tmpl.Name,
+				"display_name":                "Event approval (EN)",
+				"language":                    tmpl.Language,
+				"category":                    tmpl.Category,
+				"header_type":                 "NONE",
+				"header_content":              "",
+				"body_content":                tmpl.BodyContent,
+				"footer_content":              "",
+				"buttons":                     []any{},
+				"sample_values":               []any{},
+				"add_security_recommendation": false,
+				"code_expiration_minutes":     0,
+			})
+			testutil.SetAuthContext(req, org.ID, user.ID)
+			testutil.SetPathParam(req, "id", tmpl.ID.String())
+
+			err := app.UpdateTemplate(req)
+			require.NoError(t, err)
+			assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+			var resp struct {
+				Data handlers.TemplateResponse `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+			assert.Equal(t, "Event approval (EN)", resp.Data.DisplayName)
+			assert.Equal(t, testCase.status, resp.Data.Status)
+		})
+	}
+}
+
 func TestApp_UpdateTemplate_ApprovedToDraft(t *testing.T) {
 	t.Parallel()
 
@@ -1154,6 +1209,47 @@ func TestApp_SyncTemplates_Success(t *testing.T) {
 	assert.Equal(t, "UNKNOWN", tmpl2.QualityRating)
 	assert.NotEmpty(t, tmpl3.ID)
 	assert.Equal(t, "GREEN", tmpl3.QualityRating)
+}
+
+func TestApp_SyncTemplates_PreservesExistingDisplayName(t *testing.T) {
+	t.Parallel()
+
+	server := newMockTemplateServer(t)
+	defer server.Close()
+	app := newTemplateTestApp(t, server)
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+	existing := createTestTemplateInDB(
+		t, app, org.ID, account.Name, "synced_template_one", "DRAFT",
+	)
+	existing.DisplayName = "Event approval (EN)"
+	require.NoError(t, app.DB.Save(existing).Error)
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"whatsapp_account": account.Name,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.SyncTemplates(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var refreshed models.Template
+	require.NoError(t, app.DB.First(&refreshed, "id = ?", existing.ID).Error)
+	assert.Equal(t, "Event approval (EN)", refreshed.DisplayName)
+	assert.Equal(t, "meta-synced-1", refreshed.MetaTemplateID)
+	assert.Equal(t, "APPROVED", refreshed.Status)
+	assert.Equal(t, "Synced body content", refreshed.BodyContent)
+
+	var imported models.Template
+	require.NoError(t, app.DB.Where(
+		"organization_id = ? AND whats_app_account = ? AND name = ?",
+		org.ID, account.Name, "synced_template_two",
+	).First(&imported).Error)
+	assert.Equal(t, "synced_template_two", imported.DisplayName)
 }
 
 func TestApp_SyncTemplates_FailsWhenLocalPersistenceFails(t *testing.T) {
