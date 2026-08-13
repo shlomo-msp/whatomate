@@ -1156,6 +1156,33 @@ func TestApp_SyncTemplates_Success(t *testing.T) {
 	assert.Equal(t, "GREEN", tmpl3.QualityRating)
 }
 
+func TestApp_SyncTemplates_FailsWhenLocalPersistenceFails(t *testing.T) {
+	server := newMockTemplateServer(t)
+	defer server.Close()
+	app := newTemplateTestApp(t, server)
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+	tx := app.DB.Begin()
+	require.NoError(t, tx.Error)
+	t.Cleanup(func() { _ = tx.Rollback().Error })
+	require.NoError(t, tx.Exec("SET TRANSACTION READ ONLY").Error)
+	app.DB = tx
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"whatsapp_account": account.Name,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.SyncTemplates(req)
+	require.NoError(t, err)
+	testutil.AssertErrorResponse(
+		t, req, fasthttp.StatusInternalServerError, "Failed to persist synced template",
+	)
+}
+
 func TestApp_SyncTemplates_MissingAccount(t *testing.T) {
 	t.Parallel()
 

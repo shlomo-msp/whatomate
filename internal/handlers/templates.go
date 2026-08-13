@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
+	"gorm.io/gorm"
 )
 
 // TemplateRequest represents the request body for creating/updating a template
@@ -534,8 +536,9 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 
 		// Upsert (including soft-deleted templates to restore them)
 		existing := models.Template{}
-		if err := a.DB.Unscoped().Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
-			orgID, account.Name, template.Name, template.Language).First(&existing).Error; err == nil {
+		lookup := a.DB.Unscoped().Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
+			orgID, account.Name, template.Name, template.Language).First(&existing)
+		if lookup.Error == nil {
 			// Update existing and restore if soft-deleted (explicitly set deleted_at to NULL)
 			template.ID = existing.ID
 			updates := map[string]any{
@@ -555,10 +558,21 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 			if template.QualityRating != "" {
 				updates["quality_rating"] = template.QualityRating
 			}
-			a.DB.Unscoped().Model(&template).Updates(updates)
-		} else {
+			result := a.DB.Unscoped().Model(&template).Updates(updates)
+			if result.Error != nil || result.RowsAffected != 1 {
+				a.Log.Error("Failed to update synced template", "error", result.Error, "template", template.Name)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to persist synced template", nil, "")
+			}
+		} else if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
 			// Create new
-			a.DB.Create(&template)
+			result := a.DB.Create(&template)
+			if result.Error != nil || result.RowsAffected != 1 {
+				a.Log.Error("Failed to create synced template", "error", result.Error, "template", template.Name)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to persist synced template", nil, "")
+			}
+		} else {
+			a.Log.Error("Failed to find synced template", "error", lookup.Error, "template", template.Name)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to persist synced template", nil, "")
 		}
 		synced++
 	}

@@ -4,6 +4,14 @@ This fork keeps `main` as a deployable branch made from latest `upstream/main`
 plus a small set of fork-only commits. These changes are not intended to be
 opened as upstream PRs unless explicitly decided later.
 
+## Upstream Sync Status
+
+- Last reviewed and rebased: 2026-08-13.
+- Fork `main` is based on `upstream/main` commit `2e05458`.
+- That sync includes upstream WebSocket recovery, media compression/viewer,
+  outgoing document-filename persistence, frontend correctness fixes, and
+  dependency updates through that commit.
+
 ## Branch Policy
 
 - `upstream/main`: read-only reference to upstream.
@@ -190,6 +198,21 @@ Keep:
 - Regression tests in `internal/handlers/media_test.go` and
   `internal/handlers/auth_gaps_test.go`.
 
+### Template Sync Persistence Integrity
+
+Reason: Reservations treats a successful Whatomate template sync followed by a
+template list as authoritative reconciliation evidence. A partial local sync
+must not be reported as successful, or downstream recovery can repeat a Meta
+template mutation.
+
+Keep:
+- `SyncTemplates` returns an internal-server error when its local template
+  lookup fails unexpectedly.
+- Template creates and updates check both the database error and the affected
+  row count before incrementing the synced count.
+- `TestApp_SyncTemplates_FailsWhenLocalPersistenceFails` verifies the endpoint
+  fails closed instead of returning a partial success.
+
 ## Rebase Conflict Checks
 
 When conflicts happen, check these areas carefully:
@@ -227,6 +250,12 @@ For the selected-org media/WebSocket patch specifically:
 
 ```bash
 go test ./internal/handlers -run "ServeMedia|GetWSToken"
+```
+
+For template-sync reconciliation integrity specifically:
+
+```bash
+go test ./internal/handlers -run "TestApp_SyncTemplates_(Success|FailsWhenLocalPersistenceFails)"
 ```
 
 For deployment validation:
