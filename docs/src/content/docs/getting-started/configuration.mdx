@@ -219,24 +219,25 @@ The credentials seeded the first time `whatomate server -migrate` runs against a
 Any key in `config.toml` can be overridden by an environment variable. The mapping is:
 
 ```
-WHATOMATE_<SECTION>_<KEY>
+WHATOMATE_<SECTION>__<KEY>
 ```
 
-with underscores in `<KEY>` preserved. Examples:
+The separator between `<SECTION>` and `<KEY>` is a double underscore. Single
+underscores within a section or field name are preserved. Examples:
 
 | Variable | TOML field |
 |---|---|
-| `WHATOMATE_APP_ENVIRONMENT` | `app.environment` |
-| `WHATOMATE_APP_ENCRYPTION_KEY` | `app.encryption_key` |
-| `WHATOMATE_DATABASE_HOST` | `database.host` |
-| `WHATOMATE_DATABASE_SSL_MODE` | `database.ssl_mode` |
-| `WHATOMATE_REDIS_HOST` | `redis.host` |
-| `WHATOMATE_REDIS_TLS` | `redis.tls` |
-| `WHATOMATE_JWT_SECRET` | `jwt.secret` |
-| `WHATOMATE_STORAGE_S3_BUCKET` | `storage.s3_bucket` |
-| `WHATOMATE_RATE_LIMIT_ENABLED` | `rate_limit.enabled` |
-| `WHATOMATE_CALLING_PUBLIC_IP` | `calling.public_ip` |
-| `WHATOMATE_DEFAULT_ADMIN_PASSWORD` | `default_admin.password` |
+| `WHATOMATE_APP__ENVIRONMENT` | `app.environment` |
+| `WHATOMATE_APP__ENCRYPTION_KEY` | `app.encryption_key` |
+| `WHATOMATE_DATABASE__HOST` | `database.host` |
+| `WHATOMATE_DATABASE__SSL_MODE` | `database.ssl_mode` |
+| `WHATOMATE_REDIS__HOST` | `redis.host` |
+| `WHATOMATE_REDIS__TLS` | `redis.tls` |
+| `WHATOMATE_JWT__SECRET` | `jwt.secret` |
+| `WHATOMATE_STORAGE__S3_BUCKET` | `storage.s3_bucket` |
+| `WHATOMATE_RATE_LIMIT__ENABLED` | `rate_limit.enabled` |
+| `WHATOMATE_CALLING__PUBLIC_IP` | `calling.public_ip` |
+| `WHATOMATE_DEFAULT_ADMIN__PASSWORD` | `default_admin.password` |
 
 Env vars take precedence over the config file, so the typical pattern is to commit a non-secret `config.toml` and inject secrets (`*_PASSWORD`, `*_KEY`, `*_SECRET`, `JWT_SECRET`) via the deployment environment.
 

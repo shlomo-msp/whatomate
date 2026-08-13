@@ -58,6 +58,38 @@ Keep:
 - Docker startup must run `whatomate server -migrate -config ...` either through
   image `CMD` or a full compose command; do not override it with just `server`.
 
+### Docker Environment Override Contract
+
+Reason: the config parser introduced upstream in `28ef7ce` uses a double
+underscore between a config section and field. Single-underscore deployment
+variables are silently loaded under the wrong key and do not override
+`config.toml`.
+
+Keep:
+- Application overrides use `WHATOMATE_<SECTION>__<KEY>`; underscores inside
+  section or field names remain single.
+- `docker/docker-compose.yml` maps `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
+  `POSTGRES_DB` to `WHATOMATE_DATABASE__USER`,
+  `WHATOMATE_DATABASE__PASSWORD`, and `WHATOMATE_DATABASE__NAME`.
+- The Compose Redis password is passed to the application as
+  `WHATOMATE_REDIS__PASSWORD`.
+- Root and Docker environment examples, plus configuration/quickstart docs,
+  stay aligned with the Compose contract.
+
+Upstream watch: on every upstream sync, check whether upstream has corrected
+its environment-variable documentation and wired Compose database credentials
+into the application with double-underscore names. Incorporate an equivalent
+upstream fix and drop any duplicate fork-only changes; do not change upstream
+from this fork.
+
+Existing-host check: the standard `POSTGRES_*` and `REDIS_PASSWORD` names do
+not change. Before the first deployment of this fix, confirm each host defines
+the expected values and that they match the credentials currently used in
+`config.toml`/the initialized services. Rename any direct legacy
+`WHATOMATE_<SECTION>_<KEY>` overrides to use the double separator. This matters
+because the corrected application variables now take precedence over
+`config.toml` as originally intended.
+
 ### Local Secret And Runtime Ignore Rules
 
 Reason: production migration bundles, runtime media, generated frontend output,
@@ -231,7 +263,8 @@ When conflicts happen, check these areas carefully:
   `getOrgID` unless upstream has another safe browser-media org override.
 - `internal/handlers/auth.go`: preserve selected-org WebSocket token generation.
 - `docker/docker-compose.yml`: ensure local build still starts the correct app
-  command and persists runtime paths.
+  command, persists runtime paths, and passes database/Redis credentials with
+  the `WHATOMATE_<SECTION>__<KEY>` naming contract.
 - `.github/workflows/*.yml`: keep fork publish/release/test automation manual or
   upstream-repository guarded unless this fork intentionally enables CI.
 - `.dockerignore`: keep local secrets, runtime uploads/audio, scratch files, and
@@ -261,6 +294,7 @@ go test ./internal/handlers -run "TestApp_SyncTemplates_(Success|FailsWhenLocalP
 For deployment validation:
 
 ```bash
+docker compose --env-file docker/.env.example -f docker/docker-compose.yml config --no-env-resolution -q
 cd docker
 docker compose build --no-cache app
 docker compose up -d
