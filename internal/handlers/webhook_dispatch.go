@@ -57,6 +57,11 @@ type TransferEventData struct {
 	WhatsAppAccount string                `json:"whatsapp_account"`
 }
 
+// maxConcurrentWebhooks bounds immediate delivery work for a single dispatch.
+// Persisted deliveries that cannot start immediately remain available to the
+// background processor.
+const maxConcurrentWebhooks = 10
+
 // DispatchWebhook queues an event for all matching webhooks for the organization.
 func (a *App) DispatchWebhook(orgID uuid.UUID, eventType models.WebhookEvent, data any) {
 	a.wg.Add(1)
@@ -74,6 +79,8 @@ func (a *App) enqueueWebhookDeliveries(ctx context.Context, orgID uuid.UUID, eve
 		a.Log.Error("failed to fetch webhooks", "error", err)
 		return
 	}
+
+	deliverySlots := make(chan struct{}, maxConcurrentWebhooks)
 
 	for _, webhook := range webhooks {
 		if !containsEvent(webhook.Events, eventType) {
@@ -124,6 +131,15 @@ func (a *App) enqueueWebhookDeliveries(ctx context.Context, orgID uuid.UUID, eve
 			continue
 		}
 
+		select {
+		case deliverySlots <- struct{}{}:
+			// A slot is available for the immediate attempt.
+		case <-ctx.Done():
+			// The persisted pending delivery will be picked up by the processor.
+			a.Log.Warn("webhook immediate delivery deferred", "reason", ctx.Err(), "delivery_id", delivery.ID)
+			return
+		}
+
 		startedAt := time.Now().UTC()
 		if err := a.DB.Model(&models.WebhookDelivery{}).
 			Where("id = ?", delivery.ID).
@@ -131,6 +147,7 @@ func (a *App) enqueueWebhookDeliveries(ctx context.Context, orgID uuid.UUID, eve
 				"status":                webhookStatusInProgress,
 				"processing_started_at": startedAt,
 			}).Error; err != nil {
+			<-deliverySlots
 			a.Log.Error("failed to mark webhook delivery in progress", "error", err, "delivery_id", delivery.ID)
 			continue
 		}
@@ -140,6 +157,7 @@ func (a *App) enqueueWebhookDeliveries(ctx context.Context, orgID uuid.UUID, eve
 		a.wg.Add(1)
 		go func(d models.WebhookDelivery) {
 			defer a.wg.Done()
+			defer func() { <-deliverySlots }()
 			a.processWebhookDelivery(d)
 		}(delivery)
 	}

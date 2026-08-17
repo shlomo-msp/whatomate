@@ -264,7 +264,7 @@ const deleteOrganization = async () => {
       organizationsStore.selectOrganization(nextOrg.id)
       window.location.reload()
     } else {
-      organizationsStore.clearSelection()
+      organizationsStore.selectOrganization(null)
     }
     showDeleteDialog.value = false
     toast.success('Organization deleted')

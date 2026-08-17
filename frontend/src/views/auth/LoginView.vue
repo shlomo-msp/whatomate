@@ -124,7 +124,7 @@ const handleVerifyTwoFA = async () => {
   }
   if (!twoFAToken.value) {
     toast.error('Missing 2FA token. Please sign in again.')
-    twoFARequired.value = false
+    twoFADialogOpen.value = false
     return
   }
 
