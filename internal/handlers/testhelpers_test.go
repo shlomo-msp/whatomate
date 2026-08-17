@@ -36,6 +36,14 @@ func withHTTPClient(client *http.Client) appOption {
 	}
 }
 
+// withPublicRegistration enables the fork's opt-in public registration only
+// for tests that exercise the registration endpoint.
+func withPublicRegistration() appOption {
+	return func(a *handlers.App) {
+		a.Config.Auth.PublicRegistrationEnabled = true
+	}
+}
+
 // newTestApp creates an App instance for testing with a test database, Redis, and default config.
 // Skips the test if TEST_REDIS_URL is not set.
 func newTestApp(t *testing.T, opts ...appOption) *handlers.App {

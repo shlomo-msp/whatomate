@@ -140,7 +140,7 @@ func TestApp_Login_UserWithRole(t *testing.T) {
 }
 
 func TestApp_Register_Success(t *testing.T) {
-	app := newTestApp(t)
+	app := newTestApp(t, withPublicRegistration())
 	org := testutil.CreateTestOrganization(t, app.DB)
 	email := testutil.UniqueEmail("register")
 
@@ -200,7 +200,7 @@ func TestApp_Register_Success(t *testing.T) {
 }
 
 func TestApp_Register_EmailAlreadyExists_WrongPassword(t *testing.T) {
-	app := newTestApp(t)
+	app := newTestApp(t, withPublicRegistration())
 	org := testutil.CreateTestOrganization(t, app.DB)
 	email := testutil.UniqueEmail("existing")
 	testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(email), testutil.WithPassword("password123"))
@@ -222,7 +222,7 @@ func TestApp_Register_EmailAlreadyExists_WrongPassword(t *testing.T) {
 }
 
 func TestApp_Register_ExistingUser_JoinsNewOrg(t *testing.T) {
-	app := newTestApp(t)
+	app := newTestApp(t, withPublicRegistration())
 	org := testutil.CreateTestOrganization(t, app.DB)
 	email := testutil.UniqueEmail("multiorg")
 	testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(email), testutil.WithPassword("password123"))
@@ -247,7 +247,7 @@ func TestApp_Register_ExistingUser_JoinsNewOrg(t *testing.T) {
 }
 
 func TestApp_Register_InvalidRequestBody(t *testing.T) {
-	app := newTestApp(t)
+	app := newTestApp(t, withPublicRegistration())
 
 	req := testutil.NewRequest(t)
 	req.RequestCtx.Request.SetBody([]byte("invalid json"))

@@ -124,6 +124,8 @@ Reason: public deployments should not allow arbitrary organization/user signup.
 Keep:
 - `[auth].public_registration_enabled = false`
 - `Register` rejects public registration unless explicitly enabled.
+- Registration handler tests opt in with `withPublicRegistration`; do not enable
+  registration in the shared test app because that would hide the fork default.
 
 ### Internal Webhook URL Safety
 
@@ -145,6 +147,8 @@ Keep:
 - `/api/me/2fa/*` and `/api/auth/2fa/*` handlers.
 - Organization `require_2fa` setting.
 - Profile/login/settings UI for 2FA.
+- A missing login verification token closes `twoFADialogOpen`; do not restore
+  the removed `twoFARequired` state reference.
 
 ### Durable Outbound Webhook Delivery
 
@@ -155,8 +159,19 @@ Keep:
 - `WebhookDeliveryProcessor`.
 - Outbound webhook `delivery_id`.
 - Retry management endpoints and UI.
+- Immediate delivery attempts are limited to ten per dispatch; overflow remains
+  persisted for the background processor.
+- The test database migrates and truncates `WebhookDelivery` alongside
+  `Webhook`, matching the production migration set.
+- Retry tests assert one immediate attempt followed by persisted scheduled
+  retry state rather than the pre-outbox three immediate attempts.
 
 Integration note: receivers should treat `delivery_id` as the idempotency key.
+
+Upstream watch: if upstream adds durable webhook delivery, compare its retry and
+concurrency model before dropping this patch. Preserve persisted delivery IDs,
+bounded immediate work, and explicit test-schema coverage unless the upstream
+implementation provides equivalent guarantees.
 
 ### Media Retention And Media IDs
 
@@ -177,6 +192,21 @@ Keep:
 - `DELETE /api/organizations/{id}`.
 - Guardrails preventing deletion of current/default/last organization.
 - Settings UI delete action for super admins only.
+- The defensive no-next-organization path clears selection with the existing
+  `selectOrganization(null)` store API.
+
+### Frontend Contract Corrections
+
+Reason: the fork carries settings and authentication fields that must remain
+aligned with their Vue state and TypeScript contracts even when upstream files
+are rebased.
+
+Keep until upstream has equivalent corrections:
+- `LoginView.vue` uses `twoFADialogOpen` in the missing-token path.
+- `AccountDetailView.vue` declares `business_calling_enabled` on its local
+  `WhatsAppAccount` interface.
+- `SettingsView.vue` clears organization selection through
+  `selectOrganization(null)`.
 
 ### IVR Count Fix
 
@@ -303,7 +333,13 @@ Run before pushing rebased `main`:
 
 ```bash
 go test ./...
-cd frontend && npm run build
+cd frontend && npm run typecheck && npm run build
+```
+
+For durable webhook delivery and fork-specific test contracts:
+
+```bash
+go test ./internal/handlers -run "TestApp_(DispatchWebhook|Register_)"
 ```
 
 For the selected-org media/WebSocket patch specifically:

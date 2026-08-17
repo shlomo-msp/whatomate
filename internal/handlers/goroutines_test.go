@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,10 +116,16 @@ func TestApp_DispatchWebhook_ConcurrencyLimit(t *testing.T) {
 	clearWebhookCache(t, app.Redis, org.ID)
 	t.Cleanup(func() { clearWebhookCache(t, app.Redis, org.ID) })
 
-	// Track concurrent requests
+	// Hold requests open so the test observes the actual dispatch limit instead
+	// of relying on request timing.
 	var currentConcurrent atomic.Int32
 	var maxConcurrent atomic.Int32
 	var totalRequests atomic.Int32
+	requestStarted := make(chan struct{}, 15)
+	releaseRequests := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRequests) }) }
+	defer release()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		current := currentConcurrent.Add(1)
@@ -132,7 +139,8 @@ func TestApp_DispatchWebhook_ConcurrencyLimit(t *testing.T) {
 			}
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		requestStarted <- struct{}{}
+		<-releaseRequests
 		currentConcurrent.Add(-1)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -153,6 +161,24 @@ func TestApp_DispatchWebhook_ConcurrencyLimit(t *testing.T) {
 
 	// Dispatch webhook (should trigger all 15 webhooks)
 	app.DispatchWebhook(org.ID, models.WebhookEventMessageIncoming, map[string]string{"test": "data"})
+
+	// Ten requests should start. An eleventh must remain queued until a slot is
+	// released; without the guard it starts immediately while the first ten are
+	// still blocked.
+	for i := 0; i < 10; i++ {
+		select {
+		case <-requestStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d webhook requests started", i)
+		}
+	}
+	select {
+	case <-requestStarted:
+		assert.Fail(t, "more than 10 webhook requests started concurrently")
+	case <-time.After(500 * time.Millisecond):
+		// Expected: the eleventh delivery is waiting for a slot.
+	}
+	release()
 
 	// Wait for all background tasks
 	app.WaitForBackgroundTasks()
@@ -338,14 +364,21 @@ func TestApp_DispatchWebhook_RetryOnFailure(t *testing.T) {
 	app.DispatchWebhook(org.ID, models.WebhookEventMessageIncoming, map[string]string{"test": "data"})
 	app.WaitForBackgroundTasks()
 
-	// Should have retried (3 attempts total)
-	assert.Equal(t, int32(3), requestCount.Load(), "should retry on failure")
+	// Durable delivery makes one immediate attempt, then persists the retry for
+	// the background processor instead of blocking on immediate backoff.
+	assert.Equal(t, int32(1), requestCount.Load(), "should make one immediate attempt")
+	var delivery models.WebhookDelivery
+	require.NoError(t, app.DB.Where("webhook_id = ?", webhook.ID).First(&delivery).Error)
+	assert.Equal(t, "pending", delivery.Status)
+	assert.Equal(t, 1, delivery.Attempts)
+	assert.Equal(t, http.StatusInternalServerError, delivery.LastStatusCode)
+	assert.WithinDuration(t, time.Now().UTC().Add(time.Minute), delivery.NextAttemptAt, 5*time.Second)
 }
 
 func TestApp_DispatchWebhook_HTTPTimeout(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newTestApp(t, withHTTPClient(&http.Client{Timeout: 100 * time.Millisecond}))
 
 	// Create test organization
 	org := &models.Organization{
@@ -363,7 +396,7 @@ func TestApp_DispatchWebhook_HTTPTimeout(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestStarted.Store(true)
-		// Delay longer than HTTP client timeout (10s)
+		// Delay longer than the focused test HTTP client timeout.
 		select {
 		case <-r.Context().Done():
 			// Request was cancelled
@@ -386,7 +419,7 @@ func TestApp_DispatchWebhook_HTTPTimeout(t *testing.T) {
 
 	app.DispatchWebhook(org.ID, models.WebhookEventMessageIncoming, map[string]string{"test": "data"})
 
-	// Wait with timeout (the HTTP client has 10s timeout, with 3 retries = ~30s max)
+	// Wait with timeout for the single immediate durable-delivery attempt.
 	done := make(chan struct{})
 	go func() {
 		app.WaitForBackgroundTasks()
@@ -395,8 +428,8 @@ func TestApp_DispatchWebhook_HTTPTimeout(t *testing.T) {
 
 	select {
 	case <-done:
-		// Expected - should complete due to HTTP timeout after retries
-	case <-time.After(2 * time.Minute):
+		// Expected - the immediate attempt should complete after its timeout.
+	case <-time.After(5 * time.Second):
 		t.Fatal("dispatch should timeout and complete within reasonable time")
 	}
 

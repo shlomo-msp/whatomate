@@ -215,7 +215,9 @@ func TestApp_GetWSToken_UsesSelectedOrganizationHeader(t *testing.T) {
 	app := newTestApp(t)
 	defaultOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, defaultOrg.ID, testutil.WithSuperAdmin())
+	adminRole := testutil.CreateTestRoleExact(t, app.DB, defaultOrg.ID, "admin", true, false, nil)
+	user := testutil.CreateTestUser(t, app.DB, defaultOrg.ID,
+		testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, defaultOrg.ID, user.ID)

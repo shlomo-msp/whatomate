@@ -190,7 +190,9 @@ func TestApp_ServeMedia_SuperAdminQueryOrgOverride(t *testing.T) {
 	app := newTestApp(t)
 	defaultOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
-	superAdmin := testutil.CreateTestUser(t, app.DB, defaultOrg.ID, testutil.WithSuperAdmin())
+	adminRole := testutil.CreateTestRoleExact(t, app.DB, defaultOrg.ID, "admin", true, false, nil)
+	superAdmin := testutil.CreateTestUser(t, app.DB, defaultOrg.ID,
+		testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
 	contact := testutil.CreateTestContact(t, app.DB, targetOrg.ID)
 
 	rel := withStorageDir(t, app, "images/query-org.png", []byte("target-org media"))
